@@ -5,33 +5,91 @@ point of every loading cycle for both the Stress and Strain signals using a
 hysteresis (threshold-reversal) filter, and writes a formatted Excel
 workbook with the per-cycle results and native charts.
 
-## Requirements
+## Quick start (Windows 10)
 
-- Python 3.9+
-- pandas, numpy, openpyxl (installed via `requirements.txt` below)
+Follow these steps in order, in **PowerShell**.
 
-## Installation
+**1. Make sure Python is installed.** Open PowerShell and run:
 
-```bash
+```powershell
+python --version
+```
+
+If that fails with "not recognized", either Python isn't installed, or it
+wasn't added to PATH — install it from [python.org](https://www.python.org/downloads/)
+and make sure to check **"Add Python to PATH"** during setup. If `python`
+still isn't recognized afterwards, try `py` instead everywhere below.
+
+**2. Open this project folder in PowerShell**, then create and activate a
+virtual environment (a private, self-contained copy of the Python packages
+this project needs — you only set this up once):
+
+```powershell
 cd cyclic-loading-analyzer
-python3 -m venv .venv
-source .venv/bin/activate          # on Windows: .venv\Scripts\activate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell refuses with *"running scripts is disabled on this
+system"*, run this once and try activating again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Once activated, you'll see `(.venv)` at the start of the prompt line.
+
+**3. Install the required packages** (only needed once per venv):
+
+```powershell
 pip install -r requirements.txt
 ```
 
-You only need to do this once. Every time you come back to use the tool in
-a new terminal, just re-activate the virtual environment:
+**4. Put your raw data file into the `excel` folder** inside this project
+(it must have Time, Stress, Strain as its first three columns, in that
+order — see [Input file format](#input-file-format--important) below).
 
-```bash
-cd cyclic-loading-analyzer
-source .venv/bin/activate
+**5. Run the analysis:**
+
+```powershell
+python run.py
 ```
 
-## How to run it (manual walkthrough)
+The output Excel file appears right next to your input file inside
+`excel`, with `_results` added to its name.
 
-There are two ways to run the tool: **interactive** (it asks you questions)
-or **flag-based** (you pass everything on the command line, good for
-scripts/automation). Both do exactly the same work.
+**Every time you come back later** (new PowerShell window), you only need
+to repeat step 2's activation line (`.\.venv\Scripts\Activate.ps1`) before
+step 5 — steps 1 and 3 are one-time setup.
+
+> macOS/Linux users: the same steps apply, just replace
+> `.\.venv\Scripts\Activate.ps1` with `source .venv/bin/activate`, and
+> `python` with `python3` if needed.
+
+## Requirements
+
+- Python 3.9+
+- pandas, numpy, openpyxl (installed via `requirements.txt`, see Quick start above)
+
+## How the code works
+
+This section is for anyone who wants more control than `run.py` gives
+(different thresholds per run, a different input location, scripting it
+into a pipeline) or just wants to understand what's happening under the
+hood.
+
+`run.py` (used in the Quick start above) is a thin wrapper with fixed
+settings — see [Project layout](#project-layout) below. It always reads
+whichever single file sits in `excel/`, uses the thresholds hardcoded at
+the top of that file, and always keeps the last cycle. Everything below
+describes the underlying tool it calls, `cyclic_loading_analyzer`, which
+gives you a choice for every setting on every run instead.
+
+There are two ways to run it directly: **interactive** (it asks you
+questions) or **flag-based** (you pass everything on the command line,
+good for scripts/automation). Both do exactly the same work as `run.py`,
+just with your own choice of input file, thresholds, and last-cycle
+setting each time.
 
 ### Option A — Interactive mode
 
@@ -159,11 +217,13 @@ peaks, small-magnitude strain-scale thresholds, and cycle numbering).
 ## Project layout
 
 ```
+run.py                 simplest entry point: fixed thresholds, reads excel/, writes next to it
+excel/                  put your raw data file here for run.py
 cyclic_loading_analyzer/
-  detector.py       hysteresis peak/valley state machine + cycle pairing
-  io_utils.py        input file reading (CSV/XLSX, positional columns)
-  excel_writer.py     output workbook + chart construction
-  cli.py              command-line entry point (flag-based + interactive)
+  detector.py           hysteresis peak/valley state machine + cycle pairing
+  io_utils.py            input file reading (CSV/XLSX, positional columns)
+  excel_writer.py         output workbook + chart construction
+  cli.py                  command-line entry point (flag-based + interactive)
 tests/
-  test_detector.py    self-tests on synthetic data
+  test_detector.py        self-tests on synthetic data
 ```
