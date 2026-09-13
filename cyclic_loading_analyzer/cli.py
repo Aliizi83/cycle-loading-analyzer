@@ -19,7 +19,7 @@ from .detector import (
     trailing_incomplete_extremum,
 )
 from .excel_writer import write_workbook
-from .io_utils import read_raw_data
+from .io_utils import peek_column_count, read_raw_data, read_single_signal_data
 
 
 def _parse_yes_no(value: str) -> bool:
@@ -159,6 +159,33 @@ def _extrema_for_cycles(
     return extrema
 
 
+def _cycles_for_signal(
+    time, values, threshold: float | None, show_last_cycle: bool
+) -> tuple[list, float, int]:
+    """Run the full detection pipeline for one signal.
+
+    Auto-computes the threshold if `threshold` is None, detects extrema,
+    removes brief secondary reversals nested inside a real half-cycle (see
+    `detector.merge_secondary_reversals` — this and everything below only
+    affects which points count as cycle peaks/valleys, never the raw
+    signal), best-effort completes a final half-cycle that never confirmed
+    when `show_last_cycle` is True, and pairs everything into cycles.
+
+    Returns (cycles, threshold_used, reversals_merged_count).
+    """
+    if threshold is None:
+        threshold = suggest_threshold(values)
+
+    extrema = detect_extrema(time, values, threshold)
+    merged = merge_secondary_reversals(extrema)
+    reversals_merged = len(extrema) - len(merged)
+
+    extrema = _extrema_for_cycles(time, values, merged, show_last_cycle)
+    cycles = extrema_to_cycles(extrema, show_last_cycle)
+
+    return cycles, threshold, reversals_merged
+
+
 def process(
     input_path: Path,
     output_path: Path,
@@ -166,15 +193,10 @@ def process(
     strain_threshold: float | None,
     show_last_cycle: bool,
 ) -> tuple[int, int, int, float, float, int, int]:
-    """Run detection + write the workbook.
+    """Run detection + write the workbook for a Time/Stress/Strain file.
 
     Pass `None` for either threshold to auto-compute it as a fraction of
     that signal's own peak-to-peak range (see `detector.suggest_threshold`).
-
-    After detection, brief secondary reversals nested inside a real
-    half-cycle (see `detector.merge_secondary_reversals`) are removed —
-    this only affects which points count as cycle peaks/valleys; the raw
-    signal written to the "Raw Data" sheet is never modified.
 
     Returns (stress_cycles, strain_cycles, raw_rows, stress_threshold_used,
     strain_threshold_used, stress_reversals_merged, strain_reversals_merged).
@@ -185,27 +207,15 @@ def process(
     stress = raw_df["Stress"].to_numpy()
     strain = raw_df["Strain"].to_numpy()
 
-    if stress_threshold is None:
-        stress_threshold = suggest_threshold(stress)
-    if strain_threshold is None:
-        strain_threshold = suggest_threshold(strain)
-
-    stress_extrema = detect_extrema(time, stress, stress_threshold)
-    strain_extrema = detect_extrema(time, strain, strain_threshold)
-
-    stress_extrema_merged = merge_secondary_reversals(stress_extrema)
-    strain_extrema_merged = merge_secondary_reversals(strain_extrema)
-    stress_reversals_merged = len(stress_extrema) - len(stress_extrema_merged)
-    strain_reversals_merged = len(strain_extrema) - len(strain_extrema_merged)
-
-    stress_extrema = _extrema_for_cycles(time, stress, stress_extrema_merged, show_last_cycle)
-    strain_extrema = _extrema_for_cycles(time, strain, strain_extrema_merged, show_last_cycle)
-
-    stress_cycles = extrema_to_cycles(stress_extrema, show_last_cycle)
-    strain_cycles = extrema_to_cycles(strain_extrema, show_last_cycle)
+    stress_cycles, stress_threshold, stress_reversals_merged = _cycles_for_signal(
+        time, stress, stress_threshold, show_last_cycle
+    )
+    strain_cycles, strain_threshold, strain_reversals_merged = _cycles_for_signal(
+        time, strain, strain_threshold, show_last_cycle
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_workbook(output_path, raw_df, stress_cycles, strain_cycles)
+    write_workbook(output_path, raw_df, [("Stress", stress_cycles), ("Strain", strain_cycles)])
 
     return (
         len(stress_cycles),
@@ -216,6 +226,33 @@ def process(
         stress_reversals_merged,
         strain_reversals_merged,
     )
+
+
+def process_single_signal(
+    input_path: Path,
+    output_path: Path,
+    threshold: float | None,
+    show_last_cycle: bool,
+) -> tuple[int, int, float, int, str]:
+    """Run detection + write the workbook for a Time/<signal> file (e.g. Extension).
+
+    Same pipeline as `process`, but for files with only one signal column
+    (column 2, whatever it's named — e.g. "Extension"). The output
+    workbook has one Results sheet and 2 charts instead of 4.
+
+    Returns (cycles, raw_rows, threshold_used, reversals_merged, signal_name).
+    """
+    raw_df, signal_name = read_single_signal_data(input_path)
+
+    time = raw_df["Time"].to_numpy()
+    values = raw_df[signal_name].to_numpy()
+
+    cycles, threshold, reversals_merged = _cycles_for_signal(time, values, threshold, show_last_cycle)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_workbook(output_path, raw_df, [(signal_name, cycles)])
+
+    return len(cycles), len(raw_df), threshold, reversals_merged, signal_name
 
 
 def main(argv: list[str] | None = None) -> int:

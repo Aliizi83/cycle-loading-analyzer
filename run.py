@@ -1,18 +1,21 @@
 """Simplified fixed-configuration batch runner.
 
-No CLI flags, no interactive prompts: drop one or more raw data files
-(Time, Stress, Strain columns, in that order) into raw_data/, then run:
+No CLI flags, no interactive prompts: drop one or more raw data files into
+raw_data/, then run:
 
     python run.py
 
 Each file is processed independently. For raw_data/<name>.xlsx, the
-output is written to results/<name>_result.xlsx.
+output is written to results/<name>_result.xlsx. Two input shapes are
+auto-detected by column count:
 
-Thresholds are auto-computed per file (see STRESS_THRESHOLD /
-STRAIN_THRESHOLD below) as a fraction of each signal's own peak-to-peak
-range, so files with different amplitudes don't need separate manual
-tuning. Set either constant to a fixed number instead of None to override
-auto-computation for every file.
+- Time, Stress, Strain (3+ columns) -> 4 charts (2 per signal).
+- Time, <signal> (2 columns, e.g. Time + Extension) -> 2 charts.
+
+Thresholds are auto-computed per file (see the constants below) as a
+fraction of each signal's own peak-to-peak range, so files with different
+amplitudes don't need separate manual tuning. Set a constant to a fixed
+number instead of None to override auto-computation for every file.
 """
 
 from __future__ import annotations
@@ -20,10 +23,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from cyclic_loading_analyzer.cli import process
+from cyclic_loading_analyzer.cli import process, process_single_signal
+from cyclic_loading_analyzer.io_utils import peek_column_count
 
 STRESS_THRESHOLD = None  # None = auto-compute; or set a fixed number, e.g. 10.0
 STRAIN_THRESHOLD = None  # None = auto-compute; or set a fixed number, e.g. 0.0005
+SIGNAL_THRESHOLD = None  # threshold for single-signal (e.g. Extension) files
 SHOW_LAST_CYCLE = True
 
 PROJECT_DIR = Path(__file__).parent
@@ -41,32 +46,45 @@ def main() -> int:
     if not input_files:
         raise SystemExit(
             f"No input files found in {INPUT_DIR}\n"
-            "Put your raw data file(s) (.xlsx or .csv, columns in Time, "
-            "Stress, Strain order) in that folder and run this script again."
+            "Put your raw data file(s) (.xlsx or .csv) in that folder and "
+            "run this script again."
         )
 
     for input_path in input_files:
         output_path = OUTPUT_DIR / f"{input_path.stem}_result.xlsx"
-        (
-            stress_cycles,
-            strain_cycles,
-            raw_rows,
-            stress_threshold,
-            strain_threshold,
-            stress_merged,
-            strain_merged,
-        ) = process(input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE)
-        print(
-            f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
-            f"({stress_cycles} stress cycles [threshold {stress_threshold:g}], "
-            f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
-            f"{raw_rows} raw rows)"
-        )
-        if stress_merged or strain_merged:
+        n_cols = peek_column_count(input_path)
+
+        if n_cols >= 3:
+            (
+                stress_cycles,
+                strain_cycles,
+                raw_rows,
+                stress_threshold,
+                strain_threshold,
+                stress_merged,
+                strain_merged,
+            ) = process(input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE)
             print(
-                f"    removed {stress_merged} brief secondary stress reversals, "
-                f"{strain_merged} brief secondary strain reversals"
+                f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
+                f"({stress_cycles} stress cycles [threshold {stress_threshold:g}], "
+                f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
+                f"{raw_rows} raw rows)"
             )
+            if stress_merged or strain_merged:
+                print(
+                    f"    removed {stress_merged} brief secondary stress reversals, "
+                    f"{strain_merged} brief secondary strain reversals"
+                )
+        else:
+            cycles, raw_rows, threshold, merged, signal_name = process_single_signal(
+                input_path, output_path, SIGNAL_THRESHOLD, SHOW_LAST_CYCLE
+            )
+            print(
+                f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
+                f"({cycles} {signal_name} cycles [threshold {threshold:g}], {raw_rows} raw rows)"
+            )
+            if merged:
+                print(f"    removed {merged} brief secondary {signal_name} reversals")
 
     return 0
 

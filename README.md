@@ -158,19 +158,29 @@ one (or pass `auto` explicitly) to auto-compute it instead.
 ## Input file format — important
 
 - Accepted formats: `.csv` or `.xlsx`.
-- **If the first three column headers are exactly "time", "stress" and
-  "strain"** (case-insensitive, any order), the tool reorders them by name
-  automatically — several real export files used here actually had the
-  columns as `time, strain, stress` (strain and stress swapped), and this
-  is corrected without you having to do anything.
-- **For any other header text, columns are read by position**: column 1 is
-  Time, column 2 Stress, column 3 Strain, regardless of what they're
-  labeled. Extra columns beyond the first three are ignored.
-- **If your headers don't spell out all three names**, double-check your
-  actual column order before running — if it isn't Time, Stress, Strain,
-  reorder the columns yourself first (e.g. in Excel, or with a one-line
-  pandas script) before feeding the file in, otherwise the tool will
-  silently treat the wrong column as Stress or Strain.
+- **Two input shapes are auto-detected by column count** (`run.py` and
+  `process_single_signal`/`process` check this automatically — see
+  [Project layout](#project-layout)):
+  - **3+ columns → Time, Stress, Strain.** If the first three column
+    headers are exactly "time", "stress" and "strain" (case-insensitive,
+    any order), the tool reorders them by name automatically — several
+    real export files used here actually had the columns as
+    `time, strain, stress` (strain and stress swapped), and this is
+    corrected without you having to do anything. For any other header
+    text, columns are read by position: column 1 Time, column 2 Stress,
+    column 3 Strain, regardless of what they're labeled. Extra columns
+    beyond the first three are ignored.
+  - **Exactly 2 columns → Time, `<signal>`** (e.g. `time, extension` from
+    an LVDT). Column 2 is read by position and its own header text is
+    kept for the sheet/chart labels — no name matching needed since
+    there's nothing to disambiguate. The output workbook has one Results
+    sheet and 2 charts (instead of 4) for this single signal.
+- **If your headers don't spell out "time"/"stress"/"strain" and you have
+  3+ columns**, double-check your actual column order before running — if
+  it isn't Time, Stress, Strain, reorder the columns yourself first (e.g.
+  in Excel, or with a one-line pandas script) before feeding the file in,
+  otherwise the tool will silently treat the wrong column as Stress or
+  Strain.
 
 ## Choosing thresholds
 
@@ -201,14 +211,19 @@ extra cycles.
 
 ## Output workbook
 
-- **Raw Data** — the original Time/Stress/Strain columns, full resolution, unmodified.
-- **Stress Results** — one row per cycle: cycle #, time & value of the stress peak (Max columns A–C), cycle #, time & value of the stress valley (Min columns D–F).
-- **Strain Results** — same layout, for strain.
-- **Charts** — four native Excel charts:
-  1. **Stress vs Time (with per-cycle Max & Min)** — the full raw Stress signal with the per-cycle Max and Min lines overlaid on top.
-  2. **Strain vs Time (with per-cycle Max & Min)** — same, for Strain.
-  3. **Stress Max & Min vs Time** — just the per-cycle Max/Min envelope on its own (no raw signal), useful for seeing cycle-to-cycle drift (e.g. cyclic hardening/softening, ratcheting) without the raw noise underneath.
-  4. **Strain Max & Min vs Time** — same, for Strain.
+- **Raw Data** — the original Time + signal column(s), full resolution, unmodified.
+- **`<signal>` Results** (one per signal — "Stress Results" / "Strain
+  Results" for a 3-column file, or e.g. "Extension Results" for a
+  2-column one) — one row per cycle: cycle #, time & value of the peak
+  (Max columns A–C), cycle #, time & value of the valley (Min columns D–F).
+- **Charts** — 2 native Excel charts per signal (4 total for Stress+Strain,
+  2 for a single signal like Extension):
+  1. **`<signal>` vs Time (with per-cycle Max & Min)** — the full raw
+     signal with the per-cycle Max and Min lines overlaid on top.
+  2. **`<signal>` Max & Min vs Time** — just the per-cycle Max/Min
+     envelope on its own (no raw signal), useful for seeing cycle-to-cycle
+     drift (e.g. cyclic hardening/softening, ratcheting) without the raw
+     noise underneath.
 
   All charts are scatter-with-line (markers connected by straight lines).
   Raw-signal series beyond ~5,000 points are downsampled for chart
@@ -285,13 +300,14 @@ peaks, small-magnitude strain-scale thresholds, and cycle numbering).
 
 ```
 run.py                 simplest entry point: auto thresholds, batch-processes raw_data/ into results/
+                        (auto-detects Time/Stress/Strain vs Time/<signal> by column count)
 raw_data/               put your raw data file(s) here for run.py
 results/                run.py writes <name>_result.xlsx here for each raw_data/<name> file
 cyclic_loading_analyzer/
-  detector.py           hysteresis peak/valley state machine + cycle pairing
-  io_utils.py            input file reading (CSV/XLSX, positional columns)
-  excel_writer.py         output workbook + chart construction
-  cli.py                  command-line entry point (flag-based + interactive)
+  detector.py           hysteresis peak/valley state machine + cycle pairing (signal-agnostic)
+  io_utils.py            input file reading: read_raw_data (3-col) / read_single_signal_data (2-col)
+  excel_writer.py         output workbook + chart construction for N signals
+  cli.py                  command-line entry point; process() (2-signal) / process_single_signal()
 tests/
   test_detector.py        self-tests on synthetic data
 ```

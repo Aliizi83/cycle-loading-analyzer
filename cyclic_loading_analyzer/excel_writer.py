@@ -1,4 +1,4 @@
-"""Excel workbook output: Raw Data, Stress/Strain Results, Charts."""
+"""Excel workbook output: Raw Data, one Results sheet per signal, Charts."""
 
 from __future__ import annotations
 
@@ -20,15 +20,16 @@ TITLE_FONT = Font(bold=True, size=12)
 CENTER = Alignment(horizontal="center", vertical="center")
 
 
-def _write_raw_data_sheet(wb: Workbook, df: pd.DataFrame) -> Worksheet:
+def _write_raw_data_sheet(wb: Workbook, raw_df: pd.DataFrame) -> Worksheet:
     ws = wb.create_sheet("Raw Data")
-    ws.append(["Time", "Stress", "Strain"])
+    headers = list(raw_df.columns)
+    ws.append(headers)
     for cell in ws[1]:
         cell.font = HEADER_FONT
-    for row in df.itertuples(index=False):
-        ws.append([row.Time, row.Stress, row.Strain])
-    for col in "ABC":
-        ws.column_dimensions[col].width = 14
+    for row in raw_df.itertuples(index=False):
+        ws.append(list(row))
+    for col_idx in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 14
     ws.freeze_panes = "A2"
     return ws
 
@@ -66,9 +67,13 @@ def _write_results_sheet(
     return ws
 
 
-def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
+def _add_charts_sheet(
+    wb: Workbook, raw_df: pd.DataFrame, signals: Sequence[tuple[str, Sequence[Cycle]]]
+) -> Worksheet:
     ws = wb.create_sheet("Charts")
     raw_ws = wb["Raw Data"]
+    n_rows = len(raw_df)
+    n_cols = raw_df.shape[1]
 
     # Downsample only the chart *series* reference for large datasets;
     # "Raw Data" itself always stays full resolution.
@@ -84,15 +89,9 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
         # are built from a hidden helper sheet with every Nth raw row.
         helper = wb.create_sheet("_chart_data")
         helper.sheet_state = "hidden"
-        helper.append(["Time", "Stress", "Strain"])
+        helper.append(list(raw_df.columns))
         for r in range(2, last_row + 1, step):
-            helper.append(
-                [
-                    raw_ws.cell(row=r, column=1).value,
-                    raw_ws.cell(row=r, column=2).value,
-                    raw_ws.cell(row=r, column=3).value,
-                ]
-            )
+            helper.append([raw_ws.cell(row=r, column=c).value for c in range(1, n_cols + 1)])
         source_ws = helper
         source_last_row = helper.max_row
 
@@ -140,59 +139,57 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
         add_max_min_series(chart, results_ws, n_cycles)
         return chart
 
-    stress_results_ws = wb["Stress Results"]
-    strain_results_ws = wb["Strain Results"]
-    n_stress_cycles = max(0, stress_results_ws.max_row - 2)
-    n_strain_cycles = max(0, strain_results_ws.max_row - 2)
+    combined_charts = []
+    maxmin_charts = []
+    for i, (name, _cycles) in enumerate(signals):
+        raw_y_col = i + 2  # column A=Time; first signal is B, second is C, ...
+        results_ws = wb[f"{name} Results"]
+        n_cycles = max(0, results_ws.max_row - 2)
+        combined_charts.append(
+            make_chart(
+                f"{name} vs Time (with per-cycle Max & Min)",
+                name,
+                raw_y_col=raw_y_col,
+                results_ws=results_ws,
+                n_cycles=n_cycles,
+            )
+        )
+        maxmin_charts.append(
+            make_chart(
+                f"{name} Max & Min vs Time",
+                name,
+                raw_y_col=None,
+                results_ws=results_ws,
+                n_cycles=n_cycles,
+            )
+        )
 
-    stress_chart = make_chart(
-        "Stress vs Time (with per-cycle Max & Min)",
-        "Stress",
-        raw_y_col=2,
-        results_ws=stress_results_ws,
-        n_cycles=n_stress_cycles,
-    )
-    strain_chart = make_chart(
-        "Strain vs Time (with per-cycle Max & Min)",
-        "Strain",
-        raw_y_col=3,
-        results_ws=strain_results_ws,
-        n_cycles=n_strain_cycles,
-    )
-    stress_max_min_chart = make_chart(
-        "Stress Max & Min vs Time",
-        "Stress",
-        raw_y_col=None,
-        results_ws=stress_results_ws,
-        n_cycles=n_stress_cycles,
-    )
-    strain_max_min_chart = make_chart(
-        "Strain Max & Min vs Time",
-        "Strain",
-        raw_y_col=None,
-        results_ws=strain_results_ws,
-        n_cycles=n_strain_cycles,
-    )
+    row = 1
+    for chart in combined_charts + maxmin_charts:
+        ws.add_chart(chart, f"A{row}")
+        row += 25
 
-    ws.add_chart(stress_chart, "A1")
-    ws.add_chart(strain_chart, "A26")
-    ws.add_chart(stress_max_min_chart, "A51")
-    ws.add_chart(strain_max_min_chart, "A76")
     return ws
 
 
 def write_workbook(
     output_path: str | Path,
     raw_df: pd.DataFrame,
-    stress_cycles: Sequence[Cycle],
-    strain_cycles: Sequence[Cycle],
+    signals: Sequence[tuple[str, Sequence[Cycle]]],
 ) -> None:
+    """Write Raw Data, one Results sheet per signal, and Charts.
+
+    `raw_df` columns must be ["Time", <signal 1 name>, <signal 2 name>, ...]
+    matching the names given in `signals`, in the same order. Two charts
+    are produced per signal (raw-with-overlay, and Max/Min-only) — e.g. 2
+    charts total for one signal, 4 for two.
+    """
     wb = Workbook()
     wb.remove(wb.active)  # drop default empty sheet
 
     _write_raw_data_sheet(wb, raw_df)
-    _write_results_sheet(wb, "Stress Results", stress_cycles)
-    _write_results_sheet(wb, "Strain Results", strain_cycles)
-    _add_charts_sheet(wb, n_rows=len(raw_df))
+    for name, cycles in signals:
+        _write_results_sheet(wb, f"{name} Results", cycles)
+    _add_charts_sheet(wb, raw_df, signals)
 
     wb.save(str(output_path))
