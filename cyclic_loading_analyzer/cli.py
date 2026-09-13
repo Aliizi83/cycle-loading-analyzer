@@ -222,6 +222,7 @@ def process(
     strain_threshold: float | None,
     extension_threshold: float | None,
     show_last_cycle: bool,
+    cycle_label_fn=None,
 ) -> ProcessResult:
     """Run detection + write one workbook for a raw_data file.
 
@@ -232,6 +233,10 @@ def process(
 
     Pass `None` for any threshold to auto-compute it as a fraction of that
     signal's own peak-to-peak range (see `detector.suggest_threshold`).
+
+    `cycle_label_fn`, if given, relabels the "Cycle" column in the
+    cross-reference sheets (see `cross_reference.build_cross_reference_tables`);
+    has no effect on files without a 4th/5th-column signal.
     """
     main_df, ext_df, ext_name = read_combined_data(input_path)
 
@@ -270,7 +275,16 @@ def process(
         extension_rows = len(ext_df)
 
         cross_reference_tables = build_cross_reference_tables(
-            time, stress, strain, stress_cycles, strain_cycles, ext_time, ext_values, ext_name, ext_cycles
+            time,
+            stress,
+            strain,
+            stress_cycles,
+            strain_cycles,
+            ext_time,
+            ext_values,
+            ext_name,
+            ext_cycles,
+            cycle_label_fn,
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
