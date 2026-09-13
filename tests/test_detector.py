@@ -5,12 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cyclic_loading_analyzer.detector import (
-    Extremum,
-    detect_extrema,
-    extrema_to_cycles,
-    filter_spurious_extrema,
-)
+from cyclic_loading_analyzer.detector import detect_extrema, extrema_to_cycles
 
 
 def triangular_wave(n_cycles: int, points_per_half: int, amplitude: float, offset: float = 0.0):
@@ -112,71 +107,6 @@ def test_cycle_pairing_and_numbering():
 
 def test_empty_input():
     assert detect_extrema([], [], 1.0) == []
-
-
-def test_filter_spurious_extrema_leaves_clean_ramp_unchanged():
-    """A smoothly ramping-amplitude cycle sequence (no glitches) must pass through untouched."""
-    extrema = [
-        Extremum(0.25, 53.0, "Max"),
-        Extremum(0.37, -3.3, "Min"),
-        Extremum(0.52, 78.6, "Max"),
-        Extremum(0.68, -3.9, "Min"),
-        Extremum(0.89, 105.1, "Max"),
-        Extremum(1.09, -4.2, "Min"),
-        Extremum(1.35, 131.5, "Max"),
-        Extremum(1.60, -4.5, "Min"),
-    ]
-    assert filter_spurious_extrema(extrema) == extrema
-
-
-def test_filter_spurious_extrema_removes_isolated_glitch():
-    """Reproduces the real-world case (a ratcheting test with steadily
-    growing amplitude): a single bad sample creates a false Min sandwiched
-    between two Maxes that are otherwise consistent with each other and
-    the surrounding trend. Needs enough surrounding cycles for the local
-    window to have real trend context — a handful of points either side
-    of the glitch isn't representative of how this runs on real data."""
-    n_cycles = 20
-    max_trend = np.linspace(100, 500, n_cycles)
-    min_trend = np.linspace(-10, -80, n_cycles)
-    extrema = []
-    for i in range(n_cycles):
-        extrema.append(Extremum(float(2 * i), max_trend[i], "Max"))
-        extrema.append(Extremum(float(2 * i + 1), min_trend[i], "Min"))
-
-    glitch_idx = 2 * (n_cycles // 2) + 1  # a Min entry, mid-sequence
-    good_value = extrema[glitch_idx].value
-    extrema[glitch_idx] = Extremum(extrema[glitch_idx].time, 250.0, "Min")  # the glitch
-
-    filtered = filter_spurious_extrema(extrema)
-
-    kinds = [e.kind for e in filtered]
-    assert kinds == ["Max", "Min"] * (len(filtered) // 2)
-    values = [e.value for e in filtered]
-    assert 250.0 not in values
-    # the two Maxes flanking the glitch must have merged into one, keeping
-    # the more extreme (higher) value
-    flanking_max = max(
-        max_trend[n_cycles // 2], max_trend[n_cycles // 2 + 1]
-    )
-    assert flanking_max in values
-    assert values.count(flanking_max) == 1
-    # every genuine min elsewhere in the trend must survive untouched
-    assert good_value not in values  # it was replaced by the glitch, not recoverable
-    for v in min_trend:
-        if v != good_value:
-            assert v in values
-
-
-def test_filter_spurious_extrema_requires_at_least_three_of_a_kind():
-    """With fewer than 3 Max (or Min) points there's no local trend to
-    compare against, so nothing should be removed."""
-    extrema = [
-        Extremum(0.0, 100.0, "Max"),
-        Extremum(1.0, -999.0, "Min"),
-        Extremum(2.0, 100.0, "Max"),
-    ]
-    assert filter_spurious_extrema(extrema) == extrema
 
 
 if __name__ == "__main__":

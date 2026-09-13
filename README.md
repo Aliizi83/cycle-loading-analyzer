@@ -199,33 +199,6 @@ cycles), override it manually for that signal — a smaller fraction of the
 range if reversals are being missed, larger if noise is being counted as
 extra cycles.
 
-## Isolated data-glitch filtering
-
-Real test data occasionally has a single bad sample (a momentary DAQ error,
-contact loss, etc.) that swings far enough to satisfy the threshold and
-gets counted as a spurious extra Max/Min pair that isn't a genuine
-peak/valley of the chart. After detection, the tool automatically checks
-each confirmed Max against its neighboring Maxes (and each Min against its
-neighboring Mins) and drops any that don't fit the local trend, using a
-robust statistical test (a windowed Hampel filter) that tolerates a
-smoothly ramping or decaying amplitude — see
-`cyclic_loading_analyzer/detector.py::filter_spurious_extrema`.
-
-**This never touches or discards any raw data** — "Raw Data" always
-contains every original row unmodified. It only affects which points get
-counted as cycle peaks/valleys in "Stress Results" / "Strain Results".
-When something gets filtered, the CLI prints a line like:
-
-```
-  Filtered 1 spurious stress extrema and 0 spurious strain extrema (isolated data glitches, not real cycle peaks/valleys).
-```
-
-If it removes something that was actually real (or misses a real glitch),
-adjust `window_radius` / `sensitivity` when calling `filter_spurious_extrema`
-directly — the defaults were tuned against real test files with a genuine
-isolated glitch and, separately, a real ambiguous step-change region that
-should *not* be touched.
-
 ## Output workbook
 
 - **Raw Data** — the original Time/Stress/Strain columns, full resolution, unmodified.

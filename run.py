@@ -47,26 +47,15 @@ def main() -> int:
 
     for input_path in input_files:
         output_path = OUTPUT_DIR / f"{input_path.stem}_result.xlsx"
-        (
-            stress_cycles,
-            strain_cycles,
-            raw_rows,
-            stress_threshold,
-            strain_threshold,
-            stress_filtered,
-            strain_filtered,
-        ) = process(input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE)
+        stress_cycles, strain_cycles, raw_rows, stress_threshold, strain_threshold = process(
+            input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE
+        )
         print(
             f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
             f"({stress_cycles} stress cycles [threshold {stress_threshold:g}], "
             f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
             f"{raw_rows} raw rows)"
         )
-        if stress_filtered or strain_filtered:
-            print(
-                f"    filtered {stress_filtered} spurious stress extrema, "
-                f"{strain_filtered} spurious strain extrema (isolated data glitches)"
-            )
 
     return 0
 
