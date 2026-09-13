@@ -116,8 +116,8 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
     ws.add_chart(stress_chart, "A1")
     ws.add_chart(strain_chart, "A26")
 
-    def make_scatter_chart(
-        title: str, y_label: str, results_ws: Worksheet, x_col: int, y_col: int, n_cycles: int
+    def make_max_min_chart(
+        title: str, y_label: str, results_ws: Worksheet, n_cycles: int
     ) -> ScatterChart:
         chart = ScatterChart()
         chart.title = title
@@ -128,13 +128,15 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
         chart.height = 12
         if n_cycles > 0:
             last_row = 2 + n_cycles
-            xvalues = Reference(results_ws, min_col=x_col, min_row=3, max_row=last_row)
-            yvalues = Reference(results_ws, min_col=y_col, min_row=2, max_row=last_row)
-            series = Series(yvalues, xvalues, title_from_data=True)
-            series.marker.symbol = "circle"
-            series.marker.size = 6
-            series.graphicalProperties.line.width = 15000
-            chart.series.append(series)
+            # Max: Time in col B, value in col C. Min: Time in col E, value in col F.
+            for x_col, y_col in ((2, 3), (5, 6)):
+                xvalues = Reference(results_ws, min_col=x_col, min_row=3, max_row=last_row)
+                yvalues = Reference(results_ws, min_col=y_col, min_row=2, max_row=last_row)
+                series = Series(yvalues, xvalues, title_from_data=True)
+                series.marker.symbol = "circle"
+                series.marker.size = 6
+                series.graphicalProperties.line.width = 15000
+                chart.series.append(series)
         return chart
 
     stress_results_ws = wb["Stress Results"]
@@ -142,23 +144,15 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
     n_stress_cycles = max(0, stress_results_ws.max_row - 2)
     n_strain_cycles = max(0, strain_results_ws.max_row - 2)
 
-    stress_max_chart = make_scatter_chart(
-        "Stress Max vs Time", "Stress", stress_results_ws, x_col=2, y_col=3, n_cycles=n_stress_cycles
+    stress_max_min_chart = make_max_min_chart(
+        "Stress Max & Min vs Time", "Stress", stress_results_ws, n_cycles=n_stress_cycles
     )
-    stress_min_chart = make_scatter_chart(
-        "Stress Min vs Time", "Stress", stress_results_ws, x_col=5, y_col=6, n_cycles=n_stress_cycles
-    )
-    strain_max_chart = make_scatter_chart(
-        "Strain Max vs Time", "Strain", strain_results_ws, x_col=2, y_col=3, n_cycles=n_strain_cycles
-    )
-    strain_min_chart = make_scatter_chart(
-        "Strain Min vs Time", "Strain", strain_results_ws, x_col=5, y_col=6, n_cycles=n_strain_cycles
+    strain_max_min_chart = make_max_min_chart(
+        "Strain Max & Min vs Time", "Strain", strain_results_ws, n_cycles=n_strain_cycles
     )
 
-    ws.add_chart(stress_max_chart, "A51")
-    ws.add_chart(stress_min_chart, "A76")
-    ws.add_chart(strain_max_chart, "A101")
-    ws.add_chart(strain_min_chart, "A126")
+    ws.add_chart(stress_max_min_chart, "A51")
+    ws.add_chart(strain_max_min_chart, "A76")
     return ws
 
 
