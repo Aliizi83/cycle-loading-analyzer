@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .detector import detect_extrema, extrema_to_cycles, suggest_threshold
+from .detector import detect_extrema, extrema_to_cycles, filter_spurious_extrema, suggest_threshold
 from .excel_writer import write_workbook
 from .io_utils import read_raw_data
 
@@ -140,13 +140,20 @@ def process(
     stress_threshold: float | None,
     strain_threshold: float | None,
     show_last_cycle: bool,
-) -> tuple[int, int, int, float, float]:
+) -> tuple[int, int, int, float, float, int, int]:
     """Run detection + write the workbook.
 
     Pass `None` for either threshold to auto-compute it as a fraction of
     that signal's own peak-to-peak range (see `detector.suggest_threshold`).
 
-    Returns (stress_cycles, strain_cycles, raw_rows, stress_threshold_used, strain_threshold_used).
+    After detection, spurious extrema caused by isolated data-acquisition
+    glitches (a confirmed Max/Min that breaks the local trend of its own
+    type) are filtered out — see `detector.filter_spurious_extrema`. This
+    only affects which points count as cycle peaks/valleys; the raw signal
+    written to the "Raw Data" sheet is never modified.
+
+    Returns (stress_cycles, strain_cycles, raw_rows, stress_threshold_used,
+    strain_threshold_used, stress_extrema_filtered, strain_extrema_filtered).
     """
     raw_df = read_raw_data(input_path)
 
@@ -162,13 +169,24 @@ def process(
     stress_extrema = detect_extrema(time, stress, stress_threshold)
     strain_extrema = detect_extrema(time, strain, strain_threshold)
 
-    stress_cycles = extrema_to_cycles(stress_extrema, show_last_cycle)
-    strain_cycles = extrema_to_cycles(strain_extrema, show_last_cycle)
+    stress_extrema_filtered = filter_spurious_extrema(stress_extrema)
+    strain_extrema_filtered = filter_spurious_extrema(strain_extrema)
+
+    stress_cycles = extrema_to_cycles(stress_extrema_filtered, show_last_cycle)
+    strain_cycles = extrema_to_cycles(strain_extrema_filtered, show_last_cycle)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_workbook(output_path, raw_df, stress_cycles, strain_cycles)
 
-    return len(stress_cycles), len(strain_cycles), len(raw_df), stress_threshold, strain_threshold
+    return (
+        len(stress_cycles),
+        len(strain_cycles),
+        len(raw_df),
+        stress_threshold,
+        strain_threshold,
+        len(stress_extrema) - len(stress_extrema_filtered),
+        len(strain_extrema) - len(strain_extrema_filtered),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -193,7 +211,15 @@ def main(argv: list[str] | None = None) -> int:
     if not input_path.exists():
         parser.error(f"input file not found: {input_path}")
 
-    stress_cycles, strain_cycles, raw_rows, stress_threshold, strain_threshold = process(
+    (
+        stress_cycles,
+        strain_cycles,
+        raw_rows,
+        stress_threshold,
+        strain_threshold,
+        stress_filtered,
+        strain_filtered,
+    ) = process(
         input_path,
         Path(args.output),
         args.stress_threshold,
@@ -207,6 +233,12 @@ def main(argv: list[str] | None = None) -> int:
         f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
         f"{raw_rows} raw rows)"
     )
+    if stress_filtered or strain_filtered:
+        print(
+            f"  Filtered {stress_filtered} spurious stress extrema and "
+            f"{strain_filtered} spurious strain extrema (isolated data glitches, "
+            "not real cycle peaks/valleys)."
+        )
     return 0
 
 
