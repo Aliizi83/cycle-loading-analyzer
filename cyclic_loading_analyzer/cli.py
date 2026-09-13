@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from .detector import (
@@ -18,8 +19,8 @@ from .detector import (
     suggest_threshold,
     trailing_incomplete_extremum,
 )
-from .excel_writer import write_workbook
-from .io_utils import peek_column_count, read_raw_data, read_single_signal_data
+from .excel_writer import SignalGroup, write_workbook
+from .io_utils import read_combined_data
 
 
 def _parse_yes_no(value: str) -> bool:
@@ -45,9 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="cyclic-loading-analyzer",
         description=(
             "Extract Max/Min points of every loading cycle for Stress and "
-            "Strain signals from cyclic loading test data, and write a "
-            "formatted Excel workbook with results and charts. Run with no "
-            "arguments to be prompted interactively instead."
+            "Strain (and, if present, a second signal like Extension) from "
+            "cyclic loading test data, and write a formatted Excel "
+            "workbook with results and charts. Run with no arguments to "
+            "be prompted interactively instead."
         ),
     )
     parser.add_argument("--input", help="path to input file (csv or xlsx)")
@@ -61,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--strain-threshold",
         type=_parse_threshold,
         help="reversal threshold for the Strain signal, or 'auto' / omit to auto-compute",
+    )
+    parser.add_argument(
+        "--extension-threshold",
+        type=_parse_threshold,
+        help="reversal threshold for the Extension signal (columns 4-5, if present), "
+        "or 'auto' / omit to auto-compute",
     )
     parser.add_argument(
         "--show-last-cycle",
@@ -128,6 +136,7 @@ def prompt_for_args() -> argparse.Namespace:
 
     stress_threshold = _prompt_threshold("Stress reversal threshold")
     strain_threshold = _prompt_threshold("Strain reversal threshold")
+    extension_threshold = _prompt_threshold("Extension reversal threshold (ignored if the file has no 4th/5th column)")
     show_last_cycle = _prompt_yes_no("Include the last (possibly incomplete) cycle?", default=False)
 
     return argparse.Namespace(
@@ -135,6 +144,7 @@ def prompt_for_args() -> argparse.Namespace:
         output=str(output_path),
         stress_threshold=stress_threshold,
         strain_threshold=strain_threshold,
+        extension_threshold=extension_threshold,
         show_last_cycle=show_last_cycle,
         interactive=True,
     )
@@ -186,73 +196,81 @@ def cycles_for_signal(
     return cycles, threshold, reversals_merged
 
 
+@dataclass
+class SignalOutcome:
+    name: str
+    n_cycles: int
+    threshold: float
+    reversals_merged: int
+
+
+@dataclass
+class ProcessResult:
+    raw_rows: int
+    outcomes: list[SignalOutcome]
+    extension_rows: int | None = None
+
+    def outcome(self, name: str) -> SignalOutcome:
+        return next(o for o in self.outcomes if o.name == name)
+
+
 def process(
     input_path: Path,
     output_path: Path,
     stress_threshold: float | None,
     strain_threshold: float | None,
+    extension_threshold: float | None,
     show_last_cycle: bool,
-) -> tuple[int, int, int, float, float, int, int]:
-    """Run detection + write the workbook for a Time/Stress/Strain file.
+) -> ProcessResult:
+    """Run detection + write one workbook for a raw_data file.
 
-    Pass `None` for either threshold to auto-compute it as a fraction of
-    that signal's own peak-to-peak range (see `detector.suggest_threshold`).
+    Columns 1-3 are always Time/Stress/Strain. If columns 4-5 are also
+    present (a second, independently-sampled Time/<signal> pair — e.g.
+    Time/Extension from an LVDT), that signal is detected and charted too,
+    in the SAME output workbook (see `io_utils.read_combined_data`).
 
-    Returns (stress_cycles, strain_cycles, raw_rows, stress_threshold_used,
-    strain_threshold_used, stress_reversals_merged, strain_reversals_merged).
+    Pass `None` for any threshold to auto-compute it as a fraction of that
+    signal's own peak-to-peak range (see `detector.suggest_threshold`).
     """
-    raw_df = read_raw_data(input_path)
+    main_df, ext_df, ext_name = read_combined_data(input_path)
 
-    time = raw_df["Time"].to_numpy()
-    stress = raw_df["Stress"].to_numpy()
-    strain = raw_df["Strain"].to_numpy()
+    time = main_df["Time"].to_numpy()
+    stress = main_df["Stress"].to_numpy()
+    strain = main_df["Strain"].to_numpy()
 
-    stress_cycles, stress_threshold, stress_reversals_merged = cycles_for_signal(
+    stress_cycles, stress_threshold, stress_merged = cycles_for_signal(
         time, stress, stress_threshold, show_last_cycle
     )
-    strain_cycles, strain_threshold, strain_reversals_merged = cycles_for_signal(
+    strain_cycles, strain_threshold, strain_merged = cycles_for_signal(
         time, strain, strain_threshold, show_last_cycle
     )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_workbook(output_path, raw_df, [("Stress", stress_cycles), ("Strain", strain_cycles)])
+    groups = [
+        SignalGroup(
+            time=time,
+            signals=[("Stress", stress, stress_cycles), ("Strain", strain, strain_cycles)],
+        )
+    ]
+    outcomes = [
+        SignalOutcome("Stress", len(stress_cycles), stress_threshold, stress_merged),
+        SignalOutcome("Strain", len(strain_cycles), strain_threshold, strain_merged),
+    ]
+    extension_rows = None
 
-    return (
-        len(stress_cycles),
-        len(strain_cycles),
-        len(raw_df),
-        stress_threshold,
-        strain_threshold,
-        stress_reversals_merged,
-        strain_reversals_merged,
-    )
-
-
-def process_single_signal(
-    input_path: Path,
-    output_path: Path,
-    threshold: float | None,
-    show_last_cycle: bool,
-) -> tuple[int, int, float, int, str]:
-    """Run detection + write the workbook for a Time/<signal> file (e.g. Extension).
-
-    Same pipeline as `process`, but for files with only one signal column
-    (column 2, whatever it's named — e.g. "Extension"). The output
-    workbook has one Results sheet and 2 charts instead of 4.
-
-    Returns (cycles, raw_rows, threshold_used, reversals_merged, signal_name).
-    """
-    raw_df, signal_name = read_single_signal_data(input_path)
-
-    time = raw_df["Time"].to_numpy()
-    values = raw_df[signal_name].to_numpy()
-
-    cycles, threshold, reversals_merged = cycles_for_signal(time, values, threshold, show_last_cycle)
+    if ext_df is not None:
+        ext_time = ext_df["Time"].to_numpy()
+        ext_values = ext_df[ext_name].to_numpy()
+        ext_cycles, ext_threshold, ext_merged = cycles_for_signal(
+            ext_time, ext_values, extension_threshold, show_last_cycle
+        )
+        groups.append(SignalGroup(time=ext_time, signals=[(ext_name, ext_values, ext_cycles)]))
+        outcomes.append(SignalOutcome(ext_name, len(ext_cycles), ext_threshold, ext_merged))
+        extension_rows = len(ext_df)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_workbook(output_path, raw_df, [(signal_name, cycles)])
+    write_workbook(output_path, groups)
 
-    return len(cycles), len(raw_df), threshold, reversals_merged, signal_name
+    return ProcessResult(raw_rows=len(main_df), outcomes=outcomes, extension_rows=extension_rows)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -272,38 +290,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.show_last_cycle is None:
         args.show_last_cycle = False
+    if not hasattr(args, "extension_threshold"):
+        args.extension_threshold = None
 
     input_path = Path(args.input)
     if not input_path.exists():
         parser.error(f"input file not found: {input_path}")
 
-    (
-        stress_cycles,
-        strain_cycles,
-        raw_rows,
-        stress_threshold,
-        strain_threshold,
-        stress_merged,
-        strain_merged,
-    ) = process(
+    result = process(
         input_path,
         Path(args.output),
         args.stress_threshold,
         args.strain_threshold,
+        args.extension_threshold,
         args.show_last_cycle,
     )
 
-    print(
-        f"Wrote {args.output} "
-        f"({stress_cycles} stress cycles [threshold {stress_threshold:g}], "
-        f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
-        f"{raw_rows} raw rows)"
-    )
-    if stress_merged or strain_merged:
-        print(
-            f"  Removed {stress_merged} brief secondary stress reversals and "
-            f"{strain_merged} brief secondary strain reversals (not real cycle peaks/valleys)."
-        )
+    parts = [
+        f"{o.n_cycles} {o.name.lower()} cycles [threshold {o.threshold:g}]" for o in result.outcomes
+    ]
+    print(f"Wrote {args.output} ({', '.join(parts)}, {result.raw_rows} raw rows)")
+
+    merged_parts = [f"{o.reversals_merged} {o.name.lower()}" for o in result.outcomes if o.reversals_merged]
+    if merged_parts:
+        print(f"  Removed brief secondary reversals: {', '.join(merged_parts)} (not real cycle peaks/valleys).")
     return 0
 
 

@@ -6,11 +6,10 @@ raw_data/, then run:
     python run.py
 
 Each file is processed independently. For raw_data/<name>.xlsx, the
-output is written to results/<name>_result.xlsx. Two input shapes are
-auto-detected by column count:
-
-- Time, Stress, Strain (3+ columns) -> 4 charts (2 per signal).
-- Time, <signal> (2 columns, e.g. Time + Extension) -> 2 charts.
+output is written to results/<name>_result.xlsx — one workbook with every
+signal the file carries: Stress + Strain (columns 1-3, always), plus a
+third signal like Extension (columns 4-5, independently sampled) when
+present.
 
 Thresholds are auto-computed per file (see the constants below) as a
 fraction of each signal's own peak-to-peak range, so files with different
@@ -23,12 +22,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from cyclic_loading_analyzer.cli import process, process_single_signal
-from cyclic_loading_analyzer.io_utils import peek_column_count
+from cyclic_loading_analyzer.cli import process
 
 STRESS_THRESHOLD = None  # None = auto-compute; or set a fixed number, e.g. 10.0
 STRAIN_THRESHOLD = None  # None = auto-compute; or set a fixed number, e.g. 0.0005
-SIGNAL_THRESHOLD = None  # threshold for single-signal (e.g. Extension) files
+EXTENSION_THRESHOLD = None  # threshold for a 4th/5th-column signal (e.g. Extension), if present
 SHOW_LAST_CYCLE = True
 
 PROJECT_DIR = Path(__file__).parent
@@ -52,39 +50,19 @@ def main() -> int:
 
     for input_path in input_files:
         output_path = OUTPUT_DIR / f"{input_path.stem}_result.xlsx"
-        n_cols = peek_column_count(input_path)
+        result = process(
+            input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, EXTENSION_THRESHOLD, SHOW_LAST_CYCLE
+        )
 
-        if n_cols >= 3:
-            (
-                stress_cycles,
-                strain_cycles,
-                raw_rows,
-                stress_threshold,
-                strain_threshold,
-                stress_merged,
-                strain_merged,
-            ) = process(input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE)
-            print(
-                f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
-                f"({stress_cycles} stress cycles [threshold {stress_threshold:g}], "
-                f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
-                f"{raw_rows} raw rows)"
-            )
-            if stress_merged or strain_merged:
-                print(
-                    f"    removed {stress_merged} brief secondary stress reversals, "
-                    f"{strain_merged} brief secondary strain reversals"
-                )
-        else:
-            cycles, raw_rows, threshold, merged, signal_name = process_single_signal(
-                input_path, output_path, SIGNAL_THRESHOLD, SHOW_LAST_CYCLE
-            )
-            print(
-                f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
-                f"({cycles} {signal_name} cycles [threshold {threshold:g}], {raw_rows} raw rows)"
-            )
-            if merged:
-                print(f"    removed {merged} brief secondary {signal_name} reversals")
+        parts = [f"{o.n_cycles} {o.name.lower()} cycles [threshold {o.threshold:g}]" for o in result.outcomes]
+        print(
+            f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
+            f"({', '.join(parts)}, {result.raw_rows} raw rows)"
+        )
+
+        merged_parts = [f"{o.reversals_merged} {o.name.lower()}" for o in result.outcomes if o.reversals_merged]
+        if merged_parts:
+            print(f"    removed brief secondary reversals: {', '.join(merged_parts)}")
 
     return 0
 

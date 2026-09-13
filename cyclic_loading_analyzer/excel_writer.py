@@ -1,11 +1,18 @@
-"""Excel workbook output: Raw Data, one Results sheet per signal, Charts."""
+"""Excel workbook output: Raw Data, one Results sheet per signal, Charts.
+
+Signals are organized into groups that share one Time column (e.g. Stress
+and Strain, sampled by the same DAQ). A workbook can have more than one
+group with independent time bases and row counts (e.g. a second group for
+an LVDT-sampled Extension signal) — each still gets its own pair of
+charts, all landing in the same "Charts" sheet.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-import pandas as pd
 from openpyxl import Workbook
 from openpyxl.chart import Reference, ScatterChart, Series
 from openpyxl.styles import Alignment, Font
@@ -24,18 +31,74 @@ MAX_SERIES_COLOR = "C00000"  # red
 MIN_SERIES_COLOR = "FFC000"  # amber (more legible than pure yellow on white)
 
 
-def _write_raw_data_sheet(wb: Workbook, raw_df: pd.DataFrame) -> Worksheet:
+@dataclass(frozen=True)
+class SignalGroup:
+    """One or more signals sharing a single Time column.
+
+    `time` is that shared time base. `signals` is a list of
+    (name, values, cycles) — `values` is the raw signal aligned to `time`
+    (same length), `cycles` are its already-detected Max/Min pairs.
+    """
+
+    time: Sequence[float]
+    signals: Sequence[tuple[str, Sequence[float], Sequence[Cycle]]]
+
+
+def _write_raw_data_sheet(
+    wb: Workbook, groups: Sequence[SignalGroup]
+) -> tuple[Worksheet, list[tuple[int, list[int], int]]]:
+    """Write each group as its own block of columns (Time, signal...),
+    left to right, separated by one blank spacer column. Groups may have
+    different row counts — shorter ones just leave blank cells below
+    their own last row.
+
+    Returns (worksheet, layout) where layout[i] = (time_col, value_cols,
+    n_rows) for groups[i], all 1-indexed column numbers.
+    """
     ws = wb.create_sheet("Raw Data")
-    headers = list(raw_df.columns)
-    ws.append(headers)
+
+    layout: list[tuple[int, list[int], int]] = []
+    header_row: list[str] = []
+    col = 1
+    for gi, group in enumerate(groups):
+        time_col = col
+        value_cols = []
+        header_row.append("Time")
+        col += 1
+        for name, _values, _cycles in group.signals:
+            header_row.append(name)
+            value_cols.append(col)
+            col += 1
+        layout.append((time_col, value_cols, len(group.time)))
+        if gi < len(groups) - 1:
+            header_row.append("")  # spacer column
+            col += 1
+
+    ws.append(header_row)
     for cell in ws[1]:
-        cell.font = HEADER_FONT
-    for row in raw_df.itertuples(index=False):
-        ws.append(list(row))
-    for col_idx in range(1, len(headers) + 1):
+        if cell.value:
+            cell.font = HEADER_FONT
+
+    max_rows = max((n for _, _, n in layout), default=0)
+    for r in range(max_rows):
+        row: list[object] = []
+        for gi, group in enumerate(groups):
+            _time_col, value_cols, n_rows = layout[gi]
+            if r < n_rows:
+                row.append(group.time[r])
+                for vi, (_name, values, _cycles) in enumerate(group.signals):
+                    row.append(values[r])
+            else:
+                row.append(None)
+                row.extend([None] * len(group.signals))
+            if gi < len(groups) - 1:
+                row.append(None)  # spacer
+        ws.append(row)
+
+    for col_idx in range(1, len(header_row) + 1):
         ws.column_dimensions[get_column_letter(col_idx)].width = 14
     ws.freeze_panes = "A2"
-    return ws
+    return ws, layout
 
 
 def _write_results_sheet(
@@ -72,36 +135,17 @@ def _write_results_sheet(
 
 
 def _add_charts_sheet(
-    wb: Workbook, raw_df: pd.DataFrame, signals: Sequence[tuple[str, Sequence[Cycle]]]
+    wb: Workbook,
+    groups: Sequence[SignalGroup],
+    layout: list[tuple[int, list[int], int]],
 ) -> Worksheet:
     ws = wb.create_sheet("Charts")
     raw_ws = wb["Raw Data"]
-    n_rows = len(raw_df)
-    n_cols = raw_df.shape[1]
+    helper_ws = None  # created lazily, only if some group needs downsampling
 
-    # Downsample only the chart *series* reference for large datasets;
-    # "Raw Data" itself always stays full resolution.
-    step = max(1, (n_rows // CHART_MAX_POINTS) + 1) if n_rows > CHART_MAX_POINTS else 1
-
-    last_row = n_rows + 1  # +1 for header row
-
-    if step == 1:
-        source_ws = raw_ws
-        source_last_row = last_row
-    else:
-        # Reference() cannot stride rows, so downsampled chart series
-        # are built from a hidden helper sheet with every Nth raw row.
-        helper = wb.create_sheet("_chart_data")
-        helper.sheet_state = "hidden"
-        helper.append(list(raw_df.columns))
-        for r in range(2, last_row + 1, step):
-            helper.append([raw_ws.cell(row=r, column=c).value for c in range(1, n_cols + 1)])
-        source_ws = helper
-        source_last_row = helper.max_row
-
-    def add_raw_series(chart: ScatterChart, y_col: int) -> None:
-        xvalues = Reference(source_ws, min_col=1, min_row=2, max_row=source_last_row)
-        yvalues = Reference(source_ws, min_col=y_col, min_row=1, max_row=source_last_row)
+    def add_raw_series(chart: ScatterChart, source_ws: Worksheet, x_col: int, y_col: int, last_row: int) -> None:
+        xvalues = Reference(source_ws, min_col=x_col, min_row=2, max_row=last_row)
+        yvalues = Reference(source_ws, min_col=y_col, min_row=1, max_row=last_row)
         series = Series(yvalues, xvalues, title_from_data=True)
         series.marker.symbol = "none"
         series.smooth = False
@@ -131,7 +175,7 @@ def _add_charts_sheet(
         title: str,
         y_label: str,
         *,
-        raw_y_col: int | None,
+        raw_source: tuple[Worksheet, int, int, int] | None,
         results_ws: Worksheet,
         n_cycles: int,
     ) -> ScatterChart:
@@ -142,8 +186,9 @@ def _add_charts_sheet(
         chart.y_axis.title = y_label
         chart.width = 24
         chart.height = 12
-        if raw_y_col is not None:
-            add_raw_series(chart, raw_y_col)
+        if raw_source is not None:
+            source_ws, x_col, y_col, last_row = raw_source
+            add_raw_series(chart, source_ws, x_col, y_col, last_row)
         add_max_min_series(chart, results_ws, n_cycles)
         chart.legend.position = "b"
         chart.legend.overlay = False
@@ -151,28 +196,63 @@ def _add_charts_sheet(
 
     combined_charts = []
     maxmin_charts = []
-    for i, (name, _cycles) in enumerate(signals):
-        raw_y_col = i + 2  # column A=Time; first signal is B, second is C, ...
-        results_ws = wb[f"{name} Results"]
-        n_cycles = max(0, results_ws.max_row - 2)
-        combined_charts.append(
-            make_chart(
-                f"{name} vs Time (with per-cycle Max & Min)",
-                name,
-                raw_y_col=raw_y_col,
-                results_ws=results_ws,
-                n_cycles=n_cycles,
+
+    for gi, group in enumerate(groups):
+        time_col, value_cols, n_rows = layout[gi]
+        step = max(1, (n_rows // CHART_MAX_POINTS) + 1) if n_rows > CHART_MAX_POINTS else 1
+        last_row = n_rows + 1
+
+        if step == 1:
+            source_ws = raw_ws
+            source_time_col = time_col
+            source_value_cols = value_cols
+            source_last_row = last_row
+        else:
+            # Reference() cannot stride rows, so downsampled chart series
+            # are built from a hidden helper sheet with every Nth row of
+            # this group only.
+            if helper_ws is None:
+                helper_ws = wb.create_sheet("_chart_data")
+                helper_ws.sheet_state = "hidden"
+            base_col = helper_ws.max_column + 1 if helper_ws.max_column > 1 else 1
+            names = [name for name, _v, _c in group.signals]
+            for i, h in enumerate(["Time"] + names):
+                helper_ws.cell(row=1, column=base_col + i, value=h)
+            out_row = 2
+            for r in range(1, n_rows, step):
+                helper_ws.cell(row=out_row, column=base_col, value=raw_ws.cell(row=r + 1, column=time_col).value)
+                for i, vcol in enumerate(value_cols):
+                    helper_ws.cell(
+                        row=out_row, column=base_col + 1 + i, value=raw_ws.cell(row=r + 1, column=vcol).value
+                    )
+                out_row += 1
+            source_ws = helper_ws
+            source_time_col = base_col
+            source_value_cols = [base_col + 1 + i for i in range(len(value_cols))]
+            source_last_row = out_row - 1
+
+        for i, (name, _values, _cycles) in enumerate(group.signals):
+            results_ws = wb[f"{name} Results"]
+            n_cycles = max(0, results_ws.max_row - 2)
+            raw_source = (source_ws, source_time_col, source_value_cols[i], source_last_row)
+            combined_charts.append(
+                make_chart(
+                    f"{name} vs Time (with per-cycle Max & Min)",
+                    name,
+                    raw_source=raw_source,
+                    results_ws=results_ws,
+                    n_cycles=n_cycles,
+                )
             )
-        )
-        maxmin_charts.append(
-            make_chart(
-                f"{name} Max & Min vs Time",
-                name,
-                raw_y_col=None,
-                results_ws=results_ws,
-                n_cycles=n_cycles,
+            maxmin_charts.append(
+                make_chart(
+                    f"{name} Max & Min vs Time",
+                    name,
+                    raw_source=None,
+                    results_ws=results_ws,
+                    n_cycles=n_cycles,
+                )
             )
-        )
 
     row = 1
     for chart in combined_charts + maxmin_charts:
@@ -182,24 +262,21 @@ def _add_charts_sheet(
     return ws
 
 
-def write_workbook(
-    output_path: str | Path,
-    raw_df: pd.DataFrame,
-    signals: Sequence[tuple[str, Sequence[Cycle]]],
-) -> None:
+def write_workbook(output_path: str | Path, groups: Sequence[SignalGroup]) -> None:
     """Write Raw Data, one Results sheet per signal, and Charts.
 
-    `raw_df` columns must be ["Time", <signal 1 name>, <signal 2 name>, ...]
-    matching the names given in `signals`, in the same order. Two charts
-    are produced per signal (raw-with-overlay, and Max/Min-only) — e.g. 2
-    charts total for one signal, 4 for two.
+    Each group in `groups` shares one Time column; groups may have
+    different row counts (independent sampling devices). Two charts are
+    produced per signal (raw-with-overlay, and Max/Min-only) — e.g. 4
+    charts total for a Stress+Strain group, 2 more for an Extension group.
     """
     wb = Workbook()
     wb.remove(wb.active)  # drop default empty sheet
 
-    _write_raw_data_sheet(wb, raw_df)
-    for name, cycles in signals:
-        _write_results_sheet(wb, f"{name} Results", cycles)
-    _add_charts_sheet(wb, raw_df, signals)
+    _raw_ws, layout = _write_raw_data_sheet(wb, groups)
+    for group in groups:
+        for name, _values, cycles in group.signals:
+            _write_results_sheet(wb, f"{name} Results", cycles)
+    _add_charts_sheet(wb, groups, layout)
 
     wb.save(str(output_path))
