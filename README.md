@@ -301,6 +301,7 @@ peaks, small-magnitude strain-scale thresholds, and cycle numbering).
 ```
 run.py                 simplest entry point: auto thresholds, batch-processes raw_data/ into results/
                         (auto-detects Time/Stress/Strain vs Time/<signal> by column count)
+compute_ci.py           one-off: adds a Ci sheet+chart to specific files' results (see its docstring)
 raw_data/               put your raw data file(s) here for run.py
 results/                run.py writes <name>_result.xlsx here for each raw_data/<name> file
 cyclic_loading_analyzer/

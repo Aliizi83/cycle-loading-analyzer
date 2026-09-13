@@ -159,7 +159,7 @@ def _extrema_for_cycles(
     return extrema
 
 
-def _cycles_for_signal(
+def cycles_for_signal(
     time, values, threshold: float | None, show_last_cycle: bool
 ) -> tuple[list, float, int]:
     """Run the full detection pipeline for one signal.
@@ -207,10 +207,10 @@ def process(
     stress = raw_df["Stress"].to_numpy()
     strain = raw_df["Strain"].to_numpy()
 
-    stress_cycles, stress_threshold, stress_reversals_merged = _cycles_for_signal(
+    stress_cycles, stress_threshold, stress_reversals_merged = cycles_for_signal(
         time, stress, stress_threshold, show_last_cycle
     )
-    strain_cycles, strain_threshold, strain_reversals_merged = _cycles_for_signal(
+    strain_cycles, strain_threshold, strain_reversals_merged = cycles_for_signal(
         time, strain, strain_threshold, show_last_cycle
     )
 
@@ -247,7 +247,7 @@ def process_single_signal(
     time = raw_df["Time"].to_numpy()
     values = raw_df[signal_name].to_numpy()
 
-    cycles, threshold, reversals_merged = _cycles_for_signal(time, values, threshold, show_last_cycle)
+    cycles, threshold, reversals_merged = cycles_for_signal(time, values, threshold, show_last_cycle)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_workbook(output_path, raw_df, [(signal_name, cycles)])
