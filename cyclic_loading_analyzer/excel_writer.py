@@ -262,13 +262,60 @@ def _add_charts_sheet(
     return ws
 
 
-def write_workbook(output_path: str | Path, groups: Sequence[SignalGroup]) -> None:
+def _write_simple_table_sheet(wb: Workbook, sheet_name: str, rows: Sequence[dict]) -> Worksheet:
+    ws = wb.create_sheet(sheet_name)
+    if not rows:
+        return ws
+    headers = list(rows[0].keys())
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = HEADER_FONT
+    for row in rows:
+        ws.append([row[h] for h in headers])
+    for col_idx in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 16
+    ws.freeze_panes = "A2"
+    return ws
+
+
+def _write_combined_cross_reference_sheet(wb: Workbook, tables: dict[str, Sequence[dict]]) -> Worksheet:
+    """All cross-reference tables laid out side by side in one sheet."""
+    ws = wb.create_sheet("Combined")
+    col = 1
+    for name, rows in tables.items():
+        if not rows:
+            continue
+        headers = list(rows[0].keys())
+        title_cell = ws.cell(row=1, column=col, value=name)
+        title_cell.font = TITLE_FONT
+        for i, h in enumerate(headers):
+            cell = ws.cell(row=2, column=col + i, value=h)
+            cell.font = HEADER_FONT
+        for r, row in enumerate(rows, start=3):
+            for i, h in enumerate(headers):
+                ws.cell(row=r, column=col + i, value=row[h])
+        for i in range(len(headers)):
+            ws.column_dimensions[get_column_letter(col + i)].width = 14
+        col += len(headers) + 1  # +1 blank spacer column between tables
+    ws.freeze_panes = "A3"
+    return ws
+
+
+def write_workbook(
+    output_path: str | Path,
+    groups: Sequence[SignalGroup],
+    cross_reference_tables: dict[str, Sequence[dict]] | None = None,
+) -> None:
     """Write Raw Data, one Results sheet per signal, and Charts.
 
     Each group in `groups` shares one Time column; groups may have
     different row counts (independent sampling devices). Two charts are
     produced per signal (raw-with-overlay, and Max/Min-only) — e.g. 4
     charts total for a Stress+Strain group, 2 more for an Extension group.
+
+    `cross_reference_tables`, if given, adds one sheet per table plus a
+    "Combined" sheet with all of them side by side — see
+    `cross_reference.build_cross_reference_tables`.
     """
     wb = Workbook()
     wb.remove(wb.active)  # drop default empty sheet
@@ -278,5 +325,10 @@ def write_workbook(output_path: str | Path, groups: Sequence[SignalGroup]) -> No
         for name, _values, cycles in group.signals:
             _write_results_sheet(wb, f"{name} Results", cycles)
     _add_charts_sheet(wb, groups, layout)
+
+    if cross_reference_tables:
+        for name, rows in cross_reference_tables.items():
+            _write_simple_table_sheet(wb, name, rows)
+        _write_combined_cross_reference_sheet(wb, cross_reference_tables)
 
     wb.save(str(output_path))

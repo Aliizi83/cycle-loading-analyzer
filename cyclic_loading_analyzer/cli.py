@@ -19,6 +19,7 @@ from .detector import (
     suggest_threshold,
     trailing_incomplete_extremum,
 )
+from .cross_reference import build_cross_reference_tables
 from .excel_writer import SignalGroup, write_workbook
 from .io_utils import read_combined_data
 
@@ -256,6 +257,7 @@ def process(
         SignalOutcome("Strain", len(strain_cycles), strain_threshold, strain_merged),
     ]
     extension_rows = None
+    cross_reference_tables = None
 
     if ext_df is not None:
         ext_time = ext_df["Time"].to_numpy()
@@ -267,8 +269,12 @@ def process(
         outcomes.append(SignalOutcome(ext_name, len(ext_cycles), ext_threshold, ext_merged))
         extension_rows = len(ext_df)
 
+        cross_reference_tables = build_cross_reference_tables(
+            time, stress, strain, stress_cycles, strain_cycles, ext_time, ext_values, ext_name, ext_cycles
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_workbook(output_path, groups)
+    write_workbook(output_path, groups, cross_reference_tables)
 
     return ProcessResult(raw_rows=len(main_df), outcomes=outcomes, extension_rows=extension_rows)
 
