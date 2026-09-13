@@ -1,16 +1,14 @@
-"""Simplified fixed-configuration runner.
+"""Simplified fixed-configuration batch runner.
 
-No CLI flags, no interactive prompts: put your raw data file (Time, Stress,
-Strain columns, in that order) in the excel/ folder next to this script,
-then just run:
+No CLI flags, no interactive prompts: drop one or more raw data files
+(Time, Stress, Strain columns, in that order) into raw_data/, then run:
 
     python run.py
 
-The output workbook is written next to the input file, with "_results"
-appended to its name.
+Each file is processed independently. For raw_data/<name>.xlsx, the
+output is written to results/<name>_result.xlsx.
 
-Edit the constants below to change the thresholds or the input folder for a
-different dataset.
+Edit the constants below to change the thresholds for a different dataset.
 """
 
 from __future__ import annotations
@@ -24,43 +22,35 @@ STRESS_THRESHOLD = 10.0
 STRAIN_THRESHOLD = 0.0005
 SHOW_LAST_CYCLE = True
 
-EXCEL_DIR = Path(__file__).parent / "excel"
+PROJECT_DIR = Path(__file__).parent
+INPUT_DIR = PROJECT_DIR / "raw_data"
+OUTPUT_DIR = PROJECT_DIR / "results"
 INPUT_SUFFIXES = (".xlsx", ".xls", ".csv")
 
 
-def find_input_file() -> Path:
-    candidates = [
-        p
-        for p in sorted(EXCEL_DIR.iterdir())
-        if p.suffix.lower() in INPUT_SUFFIXES and not p.stem.endswith("_results")
-    ]
-    if not candidates:
-        raise SystemExit(
-            f"No input file found in {EXCEL_DIR}\n"
-            "Put your raw data file (.xlsx or .csv, columns in Time, Stress, "
-            "Strain order) in that folder and run this script again."
-        )
-    if len(candidates) > 1:
-        names = ", ".join(p.name for p in candidates)
-        raise SystemExit(
-            f"Found more than one input file in {EXCEL_DIR}: {names}\n"
-            "Keep only one raw data file in that folder."
-        )
-    return candidates[0]
+def find_input_files() -> list[Path]:
+    return sorted(p for p in INPUT_DIR.iterdir() if p.suffix.lower() in INPUT_SUFFIXES)
 
 
 def main() -> int:
-    input_path = find_input_file()
-    output_path = input_path.with_name(input_path.stem + "_results.xlsx")
+    input_files = find_input_files()
+    if not input_files:
+        raise SystemExit(
+            f"No input files found in {INPUT_DIR}\n"
+            "Put your raw data file(s) (.xlsx or .csv, columns in Time, "
+            "Stress, Strain order) in that folder and run this script again."
+        )
 
-    stress_cycles, strain_cycles, raw_rows = process(
-        input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE
-    )
+    for input_path in input_files:
+        output_path = OUTPUT_DIR / f"{input_path.stem}_result.xlsx"
+        stress_cycles, strain_cycles, raw_rows = process(
+            input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE
+        )
+        print(
+            f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
+            f"({stress_cycles} stress cycles, {strain_cycles} strain cycles, {raw_rows} raw rows)"
+        )
 
-    print(
-        f"Wrote {output_path} "
-        f"({stress_cycles} stress cycles, {strain_cycles} strain cycles, {raw_rows} raw rows)"
-    )
     return 0
 
 

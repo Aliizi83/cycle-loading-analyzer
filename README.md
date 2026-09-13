@@ -45,9 +45,11 @@ Once activated, you'll see `(.venv)` at the start of the prompt line.
 pip install -r requirements.txt
 ```
 
-**4. Put your raw data file into the `excel` folder** inside this project
-(it must have Time, Stress, Strain as its first three columns, in that
-order — see [Input file format](#input-file-format--important) below).
+**4. Put your raw data file(s) into the `raw_data` folder** inside this
+project (each file must have Time, Stress, Strain as its first three
+columns, in that order — see [Input file format](#input-file-format--important)
+below). You can put more than one file in there — each is processed
+independently.
 
 **5. Run the analysis:**
 
@@ -55,8 +57,8 @@ order — see [Input file format](#input-file-format--important) below).
 python run.py
 ```
 
-The output Excel file appears right next to your input file inside
-`excel`, with `_results` added to its name.
+For every `raw_data/<name>.xlsx` (or `.csv`), the output is written to
+`results/<name>_result.xlsx`.
 
 **Every time you come back later** (new PowerShell window), you only need
 to repeat step 2's activation line (`.\.venv\Scripts\Activate.ps1`) before
@@ -79,11 +81,13 @@ into a pipeline) or just wants to understand what's happening under the
 hood.
 
 `run.py` (used in the Quick start above) is a thin wrapper with fixed
-settings — see [Project layout](#project-layout) below. It always reads
-whichever single file sits in `excel/`, uses the thresholds hardcoded at
-the top of that file, and always keeps the last cycle. Everything below
-describes the underlying tool it calls, `cyclic_loading_analyzer`, which
-gives you a choice for every setting on every run instead.
+settings — see [Project layout](#project-layout) below. It processes every
+file in `raw_data/` (one output per input in `results/`), uses the
+thresholds hardcoded at the top of that file, and always keeps the last
+cycle. Everything below describes the underlying tool it calls,
+`cyclic_loading_analyzer`, which gives you a choice for every setting on
+every run instead — including running it on a single file at any path you
+want, not just `raw_data/`.
 
 There are two ways to run it directly: **interactive** (it asks you
 questions) or **flag-based** (you pass everything on the command line,
@@ -217,8 +221,9 @@ peaks, small-magnitude strain-scale thresholds, and cycle numbering).
 ## Project layout
 
 ```
-run.py                 simplest entry point: fixed thresholds, reads excel/, writes next to it
-excel/                  put your raw data file here for run.py
+run.py                 simplest entry point: fixed thresholds, batch-processes raw_data/ into results/
+raw_data/               put your raw data file(s) here for run.py
+results/                run.py writes <name>_result.xlsx here for each raw_data/<name> file
 cyclic_loading_analyzer/
   detector.py           hysteresis peak/valley state machine + cycle pairing
   io_utils.py            input file reading (CSV/XLSX, positional columns)
