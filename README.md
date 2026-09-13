@@ -248,6 +248,28 @@ start of the recording are smaller than the auto-computed threshold; if
 so, override that signal's threshold manually with a value comfortably
 below the earliest cycles' swing.
 
+**Brief secondary reversals:** real cyclic tests sometimes show a fast,
+narrow reversal nested inside what should be one continuous half-cycle
+swing — a momentary partial unload/reload, a stress-relaxation blip, a
+brief dip right at a peak. It's real, moving data (not a data-acquisition
+error), and if its amplitude clears the threshold it gets confirmed as
+its own Max/Min pair even though it isn't a genuine top/bottom of the
+loading cycle. After detection, the tool compares each segment's
+*duration* (never its value) to the local median duration of nearby
+segments and removes the pair of extrema flanking any segment that
+completes in a small fraction of that local cadence — a genuine reversal,
+however small its amplitude, still takes roughly as long as its
+neighbors, since the test machine's stroke rate doesn't change; only a
+brief secondary event completes far faster. See
+`detector.merge_secondary_reversals`. Like the final-half-cycle handling
+above, this only changes which points count as cycle peaks/valleys —
+"Raw Data" is never modified. When something gets removed, the CLI prints
+a line:
+
+```
+  Removed 2 brief secondary stress reversals and 0 brief secondary strain reversals (not real cycle peaks/valleys).
+```
+
 ## Tests
 
 ```bash

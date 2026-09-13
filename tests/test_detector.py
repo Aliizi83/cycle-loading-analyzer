@@ -9,6 +9,7 @@ from cyclic_loading_analyzer.detector import (
     Extremum,
     detect_extrema,
     extrema_to_cycles,
+    merge_secondary_reversals,
     trailing_incomplete_extremum,
 )
 
@@ -152,6 +153,72 @@ def test_trailing_incomplete_extremum_none_when_confirmed_is_last_sample():
     value = np.array([5.0, 10.0, 3.0])
     confirmed = [Extremum(2.0, 3.0, "Min")]
     assert trailing_incomplete_extremum(time, value, confirmed) is None
+
+
+def _regular_cycle_extrema(n_cycles: int, period: float = 1.0, max_val: float = 10.0, min_val: float = -10.0):
+    """A clean, evenly-spaced Max/Min sequence with no anomalies."""
+    extrema = []
+    t = 0.0
+    for _ in range(n_cycles):
+        t += period / 2
+        extrema.append(Extremum(t, max_val, "Max"))
+        t += period / 2
+        extrema.append(Extremum(t, min_val, "Min"))
+    return extrema
+
+
+def test_merge_secondary_reversals_leaves_clean_cycles_unchanged():
+    extrema = _regular_cycle_extrema(15)
+    assert merge_secondary_reversals(extrema) == extrema
+
+
+def test_merge_secondary_reversals_removes_isolated_fast_blip():
+    """Reproduces the real case (file 21/17): a genuine but very fast
+    (~5% of normal half-cycle duration) secondary reversal nested inside
+    an otherwise-smooth descending leg, with an amplitude comfortably
+    above the detection threshold so it got confirmed. Must be removed
+    without touching the real cycles around it."""
+    extrema = _regular_cycle_extrema(10, period=1.0)
+    # locate a Max at t=5.5 (start of a descending leg toward Min at t=6.0)
+    max_idx = next(i for i, e in enumerate(extrema) if e.time == 5.5)
+    min_idx = max_idx + 1
+    assert extrema[min_idx] == Extremum(6.0, -10.0, "Min")
+    blip_min = Extremum(5.53, -2.0, "Min")
+    blip_max = Extremum(5.56, -1.5, "Max")
+    extrema_with_blip = extrema[: min_idx] + [blip_min, blip_max] + extrema[min_idx:]
+
+    result = merge_secondary_reversals(extrema_with_blip)
+
+    assert result == extrema  # blip fully removed, real cycles untouched
+
+
+def test_merge_secondary_reversals_removes_clustered_blip_at_a_peak():
+    """Reproduces the real case (file 24/27): a brief dip-and-recover right
+    at a peak splits one real Max into two near-identical Maxes with a
+    shallow spurious Min between them. The later (larger) Max should
+    survive, matching what's observed in the real data."""
+    extrema = _regular_cycle_extrema(10, period=1.0)
+    max_idx = next(i for i, e in enumerate(extrema) if e.time == 5.5)
+    real_max = extrema[max_idx]
+    extrema_with_blip = (
+        extrema[:max_idx]
+        + [Extremum(real_max.time, real_max.value, "Max"), Extremum(5.51, 9.0, "Min"), Extremum(5.52, 10.1, "Max")]
+        + extrema[max_idx + 1 :]
+    )
+
+    result = merge_secondary_reversals(extrema_with_blip)
+
+    kinds = [e.kind for e in result]
+    assert kinds == ["Max", "Min"] * (len(result) // 2)
+    times = [e.time for e in result]
+    assert 9.0 not in [e.value for e in result]
+    assert 5.5 not in times  # the earlier, shallower peak of the pair was dropped
+    assert Extremum(5.52, 10.1, "Max") in result  # the later, higher peak survives
+
+
+def test_merge_secondary_reversals_needs_at_least_four_extrema():
+    extrema = [Extremum(0.0, 10.0, "Max"), Extremum(1.0, -10.0, "Min")]
+    assert merge_secondary_reversals(extrema) == extrema
 
 
 if __name__ == "__main__":

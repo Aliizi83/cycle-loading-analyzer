@@ -125,6 +125,82 @@ def trailing_incomplete_extremum(
     return Extremum(float(tail_time[j]), float(tail_value[j]), kind)
 
 
+DEFAULT_SECONDARY_REVERSAL_WINDOW = 8
+DEFAULT_SECONDARY_REVERSAL_RATIO = 0.2
+
+
+def merge_secondary_reversals(
+    extrema: Sequence[Extremum],
+    window: int = DEFAULT_SECONDARY_REVERSAL_WINDOW,
+    ratio: float = DEFAULT_SECONDARY_REVERSAL_RATIO,
+) -> list[Extremum]:
+    """Remove brief secondary reversals nested inside one real half-cycle.
+
+    Real cyclic tests occasionally show a fast, narrow reversal — a
+    momentary partial unload/reload, a stress-relaxation blip, a brief
+    dip right at a peak — that satisfies the hysteresis threshold and
+    gets confirmed as its own Max/Min pair, even though it isn't a
+    genuine top/bottom of the loading cycle. A genuine reversal, however
+    small its amplitude, still takes roughly the same amount of TIME as
+    its neighbors (the test machine's stroke rate doesn't change); these
+    secondary blips complete in a small fraction of that time. This
+    compares each segment's duration (time between consecutive confirmed
+    extrema) to the local median duration of nearby segments — which
+    naturally tracks the test's actual cadence, whether cycles are fast
+    early in a ratcheting test or slow later — and removes the pair of
+    extrema flanking any segment whose duration is disproportionately
+    (< `ratio`) shorter than that local median. This never looks at the
+    VALUE of an extremum, only timing, so a real cycle with unusually
+    small or large amplitude relative to its neighbors is never touched
+    (only a real value-based scan was tried first and it wrongly deleted
+    a genuine reversal — validated against real test data before use).
+
+    Removing a pair can leave two same-type entries adjacent (e.g. two
+    Maxes with no Min between them, when the removed pair was a Min
+    sandwiched between two nearly-equal peaks); those are merged by
+    keeping whichever is more extreme, since together they represented
+    one real peak/valley that the blip briefly interrupted.
+    """
+    extrema = list(extrema)
+
+    def shortest_anomalous_segment() -> int | None:
+        times = [e.time for e in extrema]
+        durations = [times[i + 1] - times[i] for i in range(len(times) - 1)]
+        n = len(durations)
+        best_idx, best_score = None, ratio
+        for k in range(n):
+            lo, hi = max(0, k - window), min(n, k + window + 1)
+            neighbor = durations[lo:k] + durations[k + 1 : hi]
+            if len(neighbor) < 3:
+                continue
+            local_median = float(np.median(neighbor))
+            if local_median <= 0:
+                continue
+            score = durations[k] / local_median
+            if score < best_score:
+                best_idx, best_score = k, score
+        return best_idx
+
+    while len(extrema) >= 4:
+        k = shortest_anomalous_segment()
+        if k is None:
+            break
+        del extrema[k : k + 2]
+
+        i = 0
+        while i < len(extrema) - 1:
+            if extrema[i].kind == extrema[i + 1].kind:
+                if extrema[i].kind == "Max":
+                    keep = max(extrema[i], extrema[i + 1], key=lambda e: e.value)
+                else:
+                    keep = min(extrema[i], extrema[i + 1], key=lambda e: e.value)
+                extrema[i : i + 2] = [keep]
+            else:
+                i += 1
+
+    return extrema
+
+
 @dataclass(frozen=True)
 class Cycle:
     cycle_number: int

@@ -14,6 +14,7 @@ from pathlib import Path
 from .detector import (
     detect_extrema,
     extrema_to_cycles,
+    merge_secondary_reversals,
     suggest_threshold,
     trailing_incomplete_extremum,
 )
@@ -164,14 +165,19 @@ def process(
     stress_threshold: float | None,
     strain_threshold: float | None,
     show_last_cycle: bool,
-) -> tuple[int, int, int, float, float]:
+) -> tuple[int, int, int, float, float, int, int]:
     """Run detection + write the workbook.
 
     Pass `None` for either threshold to auto-compute it as a fraction of
     that signal's own peak-to-peak range (see `detector.suggest_threshold`).
 
+    After detection, brief secondary reversals nested inside a real
+    half-cycle (see `detector.merge_secondary_reversals`) are removed —
+    this only affects which points count as cycle peaks/valleys; the raw
+    signal written to the "Raw Data" sheet is never modified.
+
     Returns (stress_cycles, strain_cycles, raw_rows, stress_threshold_used,
-    strain_threshold_used).
+    strain_threshold_used, stress_reversals_merged, strain_reversals_merged).
     """
     raw_df = read_raw_data(input_path)
 
@@ -187,8 +193,13 @@ def process(
     stress_extrema = detect_extrema(time, stress, stress_threshold)
     strain_extrema = detect_extrema(time, strain, strain_threshold)
 
-    stress_extrema = _extrema_for_cycles(time, stress, stress_extrema, show_last_cycle)
-    strain_extrema = _extrema_for_cycles(time, strain, strain_extrema, show_last_cycle)
+    stress_extrema_merged = merge_secondary_reversals(stress_extrema)
+    strain_extrema_merged = merge_secondary_reversals(strain_extrema)
+    stress_reversals_merged = len(stress_extrema) - len(stress_extrema_merged)
+    strain_reversals_merged = len(strain_extrema) - len(strain_extrema_merged)
+
+    stress_extrema = _extrema_for_cycles(time, stress, stress_extrema_merged, show_last_cycle)
+    strain_extrema = _extrema_for_cycles(time, strain, strain_extrema_merged, show_last_cycle)
 
     stress_cycles = extrema_to_cycles(stress_extrema, show_last_cycle)
     strain_cycles = extrema_to_cycles(strain_extrema, show_last_cycle)
@@ -202,6 +213,8 @@ def process(
         len(raw_df),
         stress_threshold,
         strain_threshold,
+        stress_reversals_merged,
+        strain_reversals_merged,
     )
 
 
@@ -227,7 +240,15 @@ def main(argv: list[str] | None = None) -> int:
     if not input_path.exists():
         parser.error(f"input file not found: {input_path}")
 
-    stress_cycles, strain_cycles, raw_rows, stress_threshold, strain_threshold = process(
+    (
+        stress_cycles,
+        strain_cycles,
+        raw_rows,
+        stress_threshold,
+        strain_threshold,
+        stress_merged,
+        strain_merged,
+    ) = process(
         input_path,
         Path(args.output),
         args.stress_threshold,
@@ -241,6 +262,11 @@ def main(argv: list[str] | None = None) -> int:
         f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
         f"{raw_rows} raw rows)"
     )
+    if stress_merged or strain_merged:
+        print(
+            f"  Removed {stress_merged} brief secondary stress reversals and "
+            f"{strain_merged} brief secondary strain reversals (not real cycle peaks/valleys)."
+        )
     return 0
 
 
