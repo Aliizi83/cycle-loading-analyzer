@@ -7,7 +7,7 @@ from typing import Sequence
 
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.chart import LineChart, Reference, ScatterChart, Series
+from openpyxl.chart import Reference, ScatterChart, Series
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -96,28 +96,32 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
         source_ws = helper
         source_last_row = helper.max_row
 
-    def make_chart(title: str, y_col: int) -> LineChart:
-        chart = LineChart()
-        chart.title = title
-        chart.x_axis.title = "Time"
-        chart.y_axis.title = title.split(" vs ")[0]
-        chart.style = 2
-        chart.width = 24
-        chart.height = 12
-        data = Reference(source_ws, min_col=y_col, min_row=1, max_row=source_last_row)
-        cats = Reference(source_ws, min_col=1, min_row=2, max_row=source_last_row)
-        chart.add_data(data, titles_from_data=True)
-        chart.set_categories(cats)
-        return chart
+    def add_raw_series(chart: ScatterChart, y_col: int) -> None:
+        xvalues = Reference(source_ws, min_col=1, min_row=2, max_row=source_last_row)
+        yvalues = Reference(source_ws, min_col=y_col, min_row=1, max_row=source_last_row)
+        series = Series(yvalues, xvalues, title_from_data=True)
+        series.marker.symbol = "none"
+        series.smooth = False
+        series.graphicalProperties.line.width = 9000
+        chart.series.append(series)
 
-    stress_chart = make_chart("Stress vs Time", 2)
-    strain_chart = make_chart("Strain vs Time", 3)
+    def add_max_min_series(chart: ScatterChart, results_ws: Worksheet, n_cycles: int) -> None:
+        if n_cycles == 0:
+            return
+        last_row = 2 + n_cycles
+        # Max: Time in col B, value in col C. Min: Time in col E, value in col F.
+        for x_col, y_col in ((2, 3), (5, 6)):
+            xvalues = Reference(results_ws, min_col=x_col, min_row=3, max_row=last_row)
+            yvalues = Reference(results_ws, min_col=y_col, min_row=2, max_row=last_row)
+            series = Series(yvalues, xvalues, title_from_data=True)
+            series.marker.symbol = "circle"
+            series.marker.size = 6
+            series.smooth = False
+            series.graphicalProperties.line.width = 15000
+            chart.series.append(series)
 
-    ws.add_chart(stress_chart, "A1")
-    ws.add_chart(strain_chart, "A26")
-
-    def make_max_min_chart(
-        title: str, y_label: str, results_ws: Worksheet, n_cycles: int
+    def make_combined_chart(
+        title: str, y_label: str, raw_y_col: int, results_ws: Worksheet, n_cycles: int
     ) -> ScatterChart:
         chart = ScatterChart()
         chart.title = title
@@ -126,17 +130,8 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
         chart.y_axis.title = y_label
         chart.width = 24
         chart.height = 12
-        if n_cycles > 0:
-            last_row = 2 + n_cycles
-            # Max: Time in col B, value in col C. Min: Time in col E, value in col F.
-            for x_col, y_col in ((2, 3), (5, 6)):
-                xvalues = Reference(results_ws, min_col=x_col, min_row=3, max_row=last_row)
-                yvalues = Reference(results_ws, min_col=y_col, min_row=2, max_row=last_row)
-                series = Series(yvalues, xvalues, title_from_data=True)
-                series.marker.symbol = "circle"
-                series.marker.size = 6
-                series.graphicalProperties.line.width = 15000
-                chart.series.append(series)
+        add_raw_series(chart, raw_y_col)
+        add_max_min_series(chart, results_ws, n_cycles)
         return chart
 
     stress_results_ws = wb["Stress Results"]
@@ -144,15 +139,15 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
     n_stress_cycles = max(0, stress_results_ws.max_row - 2)
     n_strain_cycles = max(0, strain_results_ws.max_row - 2)
 
-    stress_max_min_chart = make_max_min_chart(
-        "Stress Max & Min vs Time", "Stress", stress_results_ws, n_cycles=n_stress_cycles
+    stress_chart = make_combined_chart(
+        "Stress vs Time (with per-cycle Max & Min)", "Stress", 2, stress_results_ws, n_stress_cycles
     )
-    strain_max_min_chart = make_max_min_chart(
-        "Strain Max & Min vs Time", "Strain", strain_results_ws, n_cycles=n_strain_cycles
+    strain_chart = make_combined_chart(
+        "Strain vs Time (with per-cycle Max & Min)", "Strain", 3, strain_results_ws, n_strain_cycles
     )
 
-    ws.add_chart(stress_max_min_chart, "A51")
-    ws.add_chart(strain_max_min_chart, "A76")
+    ws.add_chart(stress_chart, "A1")
+    ws.add_chart(strain_chart, "A26")
     return ws
 
 
