@@ -15,6 +15,17 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Interactive (prompts for everything)
+
+```bash
+python -m cyclic_loading_analyzer
+```
+
+Answer the prompts for input file, output file (defaults to `<input>_results.xlsx`),
+both thresholds, and whether to include the last cycle.
+
+### Flag-based (scriptable)
+
 ```bash
 python -m cyclic_loading_analyzer \
   --input data.csv \

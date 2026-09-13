@@ -1,4 +1,9 @@
-"""Command-line entry point."""
+"""Command-line entry point.
+
+Supports two modes:
+- Flag-based (scriptable): --input, --output, --stress-threshold, etc.
+- Interactive: run with no arguments (or --interactive) and answer prompts.
+"""
 
 from __future__ import annotations
 
@@ -26,60 +31,158 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Extract Max/Min points of every loading cycle for Stress and "
             "Strain signals from cyclic loading test data, and write a "
-            "formatted Excel workbook with results and charts."
+            "formatted Excel workbook with results and charts. Run with no "
+            "arguments to be prompted interactively instead."
         ),
     )
-    parser.add_argument("--input", required=True, help="path to input file (csv or xlsx)")
-    parser.add_argument("--output", required=True, help="path to output xlsx file")
+    parser.add_argument("--input", help="path to input file (csv or xlsx)")
+    parser.add_argument("--output", help="path to output xlsx file")
     parser.add_argument(
         "--stress-threshold",
-        required=True,
         type=float,
         help="reversal threshold for the Stress signal",
     )
     parser.add_argument(
         "--strain-threshold",
-        required=True,
         type=float,
         help="reversal threshold for the Strain signal",
     )
     parser.add_argument(
         "--show-last-cycle",
         type=_parse_yes_no,
-        default=False,
+        default=None,
         help="yes/no, default no (the last cycle may be incomplete)",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="force interactive prompts even if flags are also given",
     )
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def _prompt_path(message: str, *, must_exist: bool) -> Path:
+    while True:
+        raw = input(message).strip().strip('"').strip("'")
+        if not raw:
+            print("  Please enter a path.")
+            continue
+        path = Path(raw).expanduser()
+        if must_exist and not path.exists():
+            print(f"  File not found: {path}")
+            continue
+        if must_exist and path.suffix.lower() not in (".csv", ".xlsx", ".xlsm", ".xls"):
+            print(f"  Unsupported file type: {path.suffix!r} (expected .csv or .xlsx)")
+            continue
+        return path
 
-    input_path = Path(args.input)
-    if not input_path.exists():
-        parser.error(f"input file not found: {input_path}")
 
+def _prompt_float(message: str) -> float:
+    while True:
+        raw = input(message).strip()
+        try:
+            return float(raw)
+        except ValueError:
+            print(f"  Not a number: {raw!r}")
+
+
+def _prompt_yes_no(message: str, default: bool) -> bool:
+    default_label = "yes" if default else "no"
+    while True:
+        raw = input(f"{message} [yes/no, default {default_label}]: ").strip().lower()
+        if not raw:
+            return default
+        if raw in ("yes", "y"):
+            return True
+        if raw in ("no", "n"):
+            return False
+        print("  Please answer yes or no.")
+
+
+def prompt_for_args() -> argparse.Namespace:
+    print("Cyclic loading analyzer - interactive mode")
+    print("(press Ctrl+C to cancel)\n")
+
+    input_path = _prompt_path("Input file (csv or xlsx): ", must_exist=True)
+
+    default_output = input_path.with_name(input_path.stem + "_results.xlsx")
+    raw_output = input(f"Output xlsx file [default: {default_output}]: ").strip().strip('"').strip("'")
+    output_path = Path(raw_output).expanduser() if raw_output else default_output
+
+    stress_threshold = _prompt_float("Stress reversal threshold: ")
+    strain_threshold = _prompt_float("Strain reversal threshold: ")
+    show_last_cycle = _prompt_yes_no("Include the last (possibly incomplete) cycle?", default=False)
+
+    return argparse.Namespace(
+        input=str(input_path),
+        output=str(output_path),
+        stress_threshold=stress_threshold,
+        strain_threshold=strain_threshold,
+        show_last_cycle=show_last_cycle,
+        interactive=True,
+    )
+
+
+def process(
+    input_path: Path,
+    output_path: Path,
+    stress_threshold: float,
+    strain_threshold: float,
+    show_last_cycle: bool,
+) -> tuple[int, int, int]:
+    """Run detection + write the workbook. Returns (stress_cycles, strain_cycles, raw_rows) counts."""
     raw_df = read_raw_data(input_path)
 
     time = raw_df["Time"].to_numpy()
     stress = raw_df["Stress"].to_numpy()
     strain = raw_df["Strain"].to_numpy()
 
-    stress_extrema = detect_extrema(time, stress, args.stress_threshold)
-    strain_extrema = detect_extrema(time, strain, args.strain_threshold)
+    stress_extrema = detect_extrema(time, stress, stress_threshold)
+    strain_extrema = detect_extrema(time, strain, strain_threshold)
 
-    stress_cycles = extrema_to_cycles(stress_extrema, args.show_last_cycle)
-    strain_cycles = extrema_to_cycles(strain_extrema, args.show_last_cycle)
+    stress_cycles = extrema_to_cycles(stress_extrema, show_last_cycle)
+    strain_cycles = extrema_to_cycles(strain_extrema, show_last_cycle)
 
-    output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_workbook(output_path, raw_df, stress_cycles, strain_cycles)
 
+    return len(stress_cycles), len(strain_cycles), len(raw_df)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    required_missing = any(
+        v is None for v in (args.input, args.output, args.stress_threshold, args.strain_threshold)
+    )
+
+    if args.interactive or required_missing:
+        try:
+            args = prompt_for_args()
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            return 1
+
+    if args.show_last_cycle is None:
+        args.show_last_cycle = False
+
+    input_path = Path(args.input)
+    if not input_path.exists():
+        parser.error(f"input file not found: {input_path}")
+
+    stress_cycles, strain_cycles, raw_rows = process(
+        input_path,
+        Path(args.output),
+        args.stress_threshold,
+        args.strain_threshold,
+        args.show_last_cycle,
+    )
+
     print(
-        f"Wrote {output_path} "
-        f"({len(stress_cycles)} stress cycles, {len(strain_cycles)} strain cycles, "
-        f"{len(raw_df)} raw rows)"
+        f"Wrote {args.output} "
+        f"({stress_cycles} stress cycles, {strain_cycles} strain cycles, "
+        f"{raw_rows} raw rows)"
     )
     return 0
 
