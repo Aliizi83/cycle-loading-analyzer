@@ -8,7 +8,11 @@ No CLI flags, no interactive prompts: drop one or more raw data files
 Each file is processed independently. For raw_data/<name>.xlsx, the
 output is written to results/<name>_result.xlsx.
 
-Edit the constants below to change the thresholds for a different dataset.
+Thresholds are auto-computed per file (see STRESS_THRESHOLD /
+STRAIN_THRESHOLD below) as a fraction of each signal's own peak-to-peak
+range, so files with different amplitudes don't need separate manual
+tuning. Set either constant to a fixed number instead of None to override
+auto-computation for every file.
 """
 
 from __future__ import annotations
@@ -18,8 +22,8 @@ from pathlib import Path
 
 from cyclic_loading_analyzer.cli import process
 
-STRESS_THRESHOLD = 10.0
-STRAIN_THRESHOLD = 0.0005
+STRESS_THRESHOLD = None  # None = auto-compute; or set a fixed number, e.g. 10.0
+STRAIN_THRESHOLD = None  # None = auto-compute; or set a fixed number, e.g. 0.0005
 SHOW_LAST_CYCLE = True
 
 PROJECT_DIR = Path(__file__).parent
@@ -43,12 +47,14 @@ def main() -> int:
 
     for input_path in input_files:
         output_path = OUTPUT_DIR / f"{input_path.stem}_result.xlsx"
-        stress_cycles, strain_cycles, raw_rows = process(
+        stress_cycles, strain_cycles, raw_rows, stress_threshold, strain_threshold = process(
             input_path, output_path, STRESS_THRESHOLD, STRAIN_THRESHOLD, SHOW_LAST_CYCLE
         )
         print(
             f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
-            f"({stress_cycles} stress cycles, {strain_cycles} strain cycles, {raw_rows} raw rows)"
+            f"({stress_cycles} stress cycles [threshold {stress_threshold:g}], "
+            f"{strain_cycles} strain cycles [threshold {strain_threshold:g}], "
+            f"{raw_rows} raw rows)"
         )
 
     return 0

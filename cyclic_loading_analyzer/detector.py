@@ -14,7 +14,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Sequence
 
+import numpy as np
+
 ExtremaType = Literal["Max", "Min"]
+
+DEFAULT_THRESHOLD_FRACTION = 0.05
+
+
+def suggest_threshold(values: Sequence[float], fraction: float = DEFAULT_THRESHOLD_FRACTION) -> float:
+    """Suggest a hysteresis threshold as a fraction of the signal's peak-to-peak range.
+
+    Scales automatically with each signal's own amplitude, so the same
+    fraction works whether the column is stress (~O(100)) or strain
+    (~O(0.01)) and across datasets with different amplitudes.
+    """
+    arr = np.asarray(values, dtype=float)
+    return float((arr.max() - arr.min()) * fraction)
 
 
 @dataclass(frozen=True)
