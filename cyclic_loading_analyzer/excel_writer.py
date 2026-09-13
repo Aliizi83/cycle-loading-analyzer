@@ -19,6 +19,10 @@ HEADER_FONT = Font(bold=True)
 TITLE_FONT = Font(bold=True, size=12)
 CENTER = Alignment(horizontal="center", vertical="center")
 
+RAW_SERIES_COLOR = "1F77B4"  # blue
+MAX_SERIES_COLOR = "C00000"  # red
+MIN_SERIES_COLOR = "FFC000"  # amber (more legible than pure yellow on white)
+
 
 def _write_raw_data_sheet(wb: Workbook, raw_df: pd.DataFrame) -> Worksheet:
     ws = wb.create_sheet("Raw Data")
@@ -102,21 +106,25 @@ def _add_charts_sheet(
         series.marker.symbol = "none"
         series.smooth = False
         series.graphicalProperties.line.width = 9000
+        series.graphicalProperties.line.solidFill = RAW_SERIES_COLOR
         chart.series.append(series)
 
     def add_max_min_series(chart: ScatterChart, results_ws: Worksheet, n_cycles: int) -> None:
         if n_cycles == 0:
             return
         last_row = 2 + n_cycles
-        # Max: Time in col B, value in col C. Min: Time in col E, value in col F.
-        for x_col, y_col in ((2, 3), (5, 6)):
+        # Max: Time in col B, value in col C (red). Min: Time in col E, value in col F (amber).
+        for x_col, y_col, color in ((2, 3, MAX_SERIES_COLOR), (5, 6, MIN_SERIES_COLOR)):
             xvalues = Reference(results_ws, min_col=x_col, min_row=3, max_row=last_row)
             yvalues = Reference(results_ws, min_col=y_col, min_row=2, max_row=last_row)
             series = Series(yvalues, xvalues, title_from_data=True)
             series.marker.symbol = "circle"
             series.marker.size = 6
+            series.marker.graphicalProperties.solidFill = color
+            series.marker.graphicalProperties.line.solidFill = color
             series.smooth = False
             series.graphicalProperties.line.width = 15000
+            series.graphicalProperties.line.solidFill = color
             chart.series.append(series)
 
     def make_chart(
@@ -137,6 +145,8 @@ def _add_charts_sheet(
         if raw_y_col is not None:
             add_raw_series(chart, raw_y_col)
         add_max_min_series(chart, results_ws, n_cycles)
+        chart.legend.position = "b"
+        chart.legend.overlay = False
         return chart
 
     combined_charts = []
