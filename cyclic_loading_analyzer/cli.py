@@ -11,7 +11,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from .detector import detect_extrema, extrema_to_cycles, suggest_threshold
+from .detector import (
+    detect_extrema,
+    extrema_to_cycles,
+    suggest_threshold,
+    trailing_incomplete_extremum,
+)
 from .excel_writer import write_workbook
 from .io_utils import read_raw_data
 
@@ -134,13 +139,32 @@ def prompt_for_args() -> argparse.Namespace:
     )
 
 
+def _extrema_for_cycles(
+    time,
+    value,
+    extrema: list,
+    show_last_cycle: bool,
+) -> list:
+    """Extend `extrema` with a best-effort trailing extremum when the
+    recording ends mid-swing and `show_last_cycle` is True, so that final
+    half-cycle isn't silently dropped for lack of a confirmed partner. See
+    `detector.trailing_incomplete_extremum`. A no-op whenever `extrema`
+    already ends in a complete Max/Min pair, or `show_last_cycle` is False.
+    """
+    if show_last_cycle and len(extrema) % 2 == 1:
+        trailing = trailing_incomplete_extremum(time, value, extrema)
+        if trailing is not None:
+            return extrema + [trailing]
+    return extrema
+
+
 def process(
     input_path: Path,
     output_path: Path,
     stress_threshold: float | None,
     strain_threshold: float | None,
     show_last_cycle: bool,
-) -> tuple[int, int, int, float, float, int, int]:
+) -> tuple[int, int, int, float, float]:
     """Run detection + write the workbook.
 
     Pass `None` for either threshold to auto-compute it as a fraction of
@@ -162,6 +186,9 @@ def process(
 
     stress_extrema = detect_extrema(time, stress, stress_threshold)
     strain_extrema = detect_extrema(time, strain, strain_threshold)
+
+    stress_extrema = _extrema_for_cycles(time, stress, stress_extrema, show_last_cycle)
+    strain_extrema = _extrema_for_cycles(time, strain, strain_extrema, show_last_cycle)
 
     stress_cycles = extrema_to_cycles(stress_extrema, show_last_cycle)
     strain_cycles = extrema_to_cycles(strain_extrema, show_last_cycle)

@@ -226,6 +226,28 @@ is confirmed once the value has moved back by at least the threshold from
 the running extreme. See [`cyclic_loading_analyzer/detector.py`](cyclic_loading_analyzer/detector.py)
 for the exact implementation.
 
+**The final half-cycle**, when `--show-last-cycle yes`: if the recording
+ends while the signal is still moving in one direction — never reversing
+far enough to confirm a peak/valley — there is, by definition, no
+confirmed extremum to complete that last cycle with. In that case the tool
+falls back to the most extreme raw value actually reached after the last
+confirmed peak/valley (see `detector.trailing_incomplete_extremum`) so the
+final cycle isn't silently dropped. This is a best effort, not a confirmed
+reversal — the true extreme could have been lower/higher had the
+recording continued.
+
+**A known limitation:** the threshold is a single fixed value for the
+whole file. For a test whose cycle amplitude grows a lot over time (a
+ratcheting/incremental-amplitude test), a threshold sized off the *auto*
+heuristic (a fraction of the full-file range) can be larger than the
+earliest, smallest cycles' actual swing — those early cycles then never
+confirm at all and are silently missing from the output. If Stress and
+Strain report very different cycle counts for a file with strongly
+growing amplitude, check whether the first few real reversals near the
+start of the recording are smaller than the auto-computed threshold; if
+so, override that signal's threshold manually with a value comfortably
+below the earliest cycles' swing.
+
 ## Tests
 
 ```bash

@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cyclic_loading_analyzer.detector import detect_extrema, extrema_to_cycles
+from cyclic_loading_analyzer.detector import (
+    Extremum,
+    detect_extrema,
+    extrema_to_cycles,
+    trailing_incomplete_extremum,
+)
 
 
 def triangular_wave(n_cycles: int, points_per_half: int, amplitude: float, offset: float = 0.0):
@@ -107,6 +112,46 @@ def test_cycle_pairing_and_numbering():
 
 def test_empty_input():
     assert detect_extrema([], [], 1.0) == []
+
+
+def test_trailing_incomplete_extremum_after_max_finds_running_min():
+    """Recording ends mid-descent (never reverses far enough to confirm a
+    Min) — the true test-25 scenario: the last confirmed extremum is a Max
+    and the tail keeps falling all the way to the last sample."""
+    time = np.array([0, 1, 2, 3, 4, 5, 6], dtype=float)
+    value = np.array([0, 10, 5, 3, 4, 2, 1], dtype=float)  # Max confirmed at t=1 (10)
+    confirmed = detect_extrema(time, value, threshold=6.0)
+    assert confirmed == [Extremum(1.0, 10.0, "Max")]
+
+    trailing = trailing_incomplete_extremum(time, value, confirmed)
+
+    assert trailing == Extremum(6.0, 1.0, "Min")  # lowest point after t=1
+
+
+def test_trailing_incomplete_extremum_after_min_finds_running_max():
+    time = np.array([0, 1, 2, 3, 4, 5, 6], dtype=float)
+    value = np.array([0, 10, 0, 3, 8, 4, 9], dtype=float)  # Max at t=1, Min at t=2
+    confirmed = detect_extrema(time, value, threshold=6.0)
+    assert confirmed == [Extremum(1.0, 10.0, "Max"), Extremum(2.0, 0.0, "Min")]
+
+    trailing = trailing_incomplete_extremum(time, value, confirmed)
+
+    assert trailing == Extremum(6.0, 9.0, "Max")  # highest point after t=2
+
+
+def test_trailing_incomplete_extremum_none_when_nothing_confirmed():
+    assert trailing_incomplete_extremum([0.0, 1.0], [0.0, 1.0], []) is None
+
+
+def test_trailing_incomplete_extremum_none_when_confirmed_is_last_sample():
+    # a confirmed extremum sitting exactly on the final sample has no tail
+    # left to complete from (detect_extrema itself can't actually produce
+    # this — confirmation always happens on a later sample than the peak —
+    # but the function should still handle it safely if it ever occurs).
+    time = np.array([0.0, 1.0, 2.0])
+    value = np.array([5.0, 10.0, 3.0])
+    confirmed = [Extremum(2.0, 3.0, "Min")]
+    assert trailing_incomplete_extremum(time, value, confirmed) is None
 
 
 if __name__ == "__main__":
