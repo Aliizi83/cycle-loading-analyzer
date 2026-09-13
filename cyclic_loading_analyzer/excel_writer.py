@@ -120,8 +120,13 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
             series.graphicalProperties.line.width = 15000
             chart.series.append(series)
 
-    def make_combined_chart(
-        title: str, y_label: str, raw_y_col: int, results_ws: Worksheet, n_cycles: int
+    def make_chart(
+        title: str,
+        y_label: str,
+        *,
+        raw_y_col: int | None,
+        results_ws: Worksheet,
+        n_cycles: int,
     ) -> ScatterChart:
         chart = ScatterChart()
         chart.title = title
@@ -130,7 +135,8 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
         chart.y_axis.title = y_label
         chart.width = 24
         chart.height = 12
-        add_raw_series(chart, raw_y_col)
+        if raw_y_col is not None:
+            add_raw_series(chart, raw_y_col)
         add_max_min_series(chart, results_ws, n_cycles)
         return chart
 
@@ -139,15 +145,39 @@ def _add_charts_sheet(wb: Workbook, n_rows: int) -> Worksheet:
     n_stress_cycles = max(0, stress_results_ws.max_row - 2)
     n_strain_cycles = max(0, strain_results_ws.max_row - 2)
 
-    stress_chart = make_combined_chart(
-        "Stress vs Time (with per-cycle Max & Min)", "Stress", 2, stress_results_ws, n_stress_cycles
+    stress_chart = make_chart(
+        "Stress vs Time (with per-cycle Max & Min)",
+        "Stress",
+        raw_y_col=2,
+        results_ws=stress_results_ws,
+        n_cycles=n_stress_cycles,
     )
-    strain_chart = make_combined_chart(
-        "Strain vs Time (with per-cycle Max & Min)", "Strain", 3, strain_results_ws, n_strain_cycles
+    strain_chart = make_chart(
+        "Strain vs Time (with per-cycle Max & Min)",
+        "Strain",
+        raw_y_col=3,
+        results_ws=strain_results_ws,
+        n_cycles=n_strain_cycles,
+    )
+    stress_max_min_chart = make_chart(
+        "Stress Max & Min vs Time",
+        "Stress",
+        raw_y_col=None,
+        results_ws=stress_results_ws,
+        n_cycles=n_stress_cycles,
+    )
+    strain_max_min_chart = make_chart(
+        "Strain Max & Min vs Time",
+        "Strain",
+        raw_y_col=None,
+        results_ws=strain_results_ws,
+        n_cycles=n_strain_cycles,
     )
 
     ws.add_chart(stress_chart, "A1")
     ws.add_chart(strain_chart, "A26")
+    ws.add_chart(stress_max_min_chart, "A51")
+    ws.add_chart(strain_max_min_chart, "A76")
     return ws
 
 
