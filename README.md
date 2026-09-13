@@ -80,14 +80,14 @@ This section is for anyone who wants more control than `run.py` gives
 into a pipeline) or just wants to understand what's happening under the
 hood.
 
-`run.py` (used in the Quick start above) is a thin wrapper with fixed
-settings — see [Project layout](#project-layout) below. It processes every
-file in `raw_data/` (one output per input in `results/`), uses the
-thresholds hardcoded at the top of that file, and always keeps the last
-cycle. Everything below describes the underlying tool it calls,
-`cyclic_loading_analyzer`, which gives you a choice for every setting on
-every run instead — including running it on a single file at any path you
-want, not just `raw_data/`.
+`run.py` (used in the Quick start above) is a thin wrapper — see
+[Project layout](#project-layout) below. It processes every file in
+`raw_data/` (one output per input in `results/`), auto-computes both
+thresholds per file by default (see [Choosing thresholds](#choosing-thresholds)),
+and always keeps the last cycle. Everything below describes the
+underlying tool it calls, `cyclic_loading_analyzer`, which gives you a
+choice for every setting on every run instead — including running it on
+a single file at any path you want, not just `raw_data/`.
 
 There are two ways to run it directly: **interactive** (it asks you
 questions) or **flag-based** (you pass everything on the command line,
@@ -111,19 +111,22 @@ Cyclic loading analyzer - interactive mode
 
 Input file (csv or xlsx): /home/me/Downloads/test_data.xlsx
 Output xlsx file [default: /home/me/Downloads/test_data_results.xlsx]:
-Stress reversal threshold: 10
-Strain reversal threshold: 0.0005
+Stress reversal threshold [number, or leave blank to auto-compute]:
+Strain reversal threshold [number, or leave blank to auto-compute]:
 Include the last (possibly incomplete) cycle? [yes/no, default no]: yes
 ```
 
 - Press Enter on the output-file prompt to accept the suggested default
   (same folder as the input file, with `_results.xlsx` appended).
+- Press Enter on either threshold prompt to auto-compute it (see
+  [Choosing thresholds](#choosing-thresholds)), or type a number to set it
+  yourself.
 - Press Enter on the last-cycle prompt to accept the default (`no`).
 
 When it finishes it prints a summary line, e.g.:
 
 ```
-Wrote /home/me/Downloads/test_data_results.xlsx (30 stress cycles, 30 strain cycles, 160928 raw rows)
+Wrote /home/me/Downloads/test_data_results.xlsx (30 stress cycles [threshold 20.1], 30 strain cycles [threshold 0.00126], 160928 raw rows)
 ```
 
 ### Option B — Flag-based mode
@@ -137,8 +140,9 @@ python -m cyclic_loading_analyzer \
   --show-last-cycle no
 ```
 
-If you omit any of the required flags, the tool automatically falls back to
-interactive mode and asks for the missing pieces.
+Omit `--input` or `--output` and the tool automatically falls back to
+interactive mode and asks for them. Thresholds are optional — omit either
+one (or pass `auto` explicitly) to auto-compute it instead.
 
 ### Arguments
 
@@ -146,24 +150,27 @@ interactive mode and asks for the missing pieces.
 |---|---|---|
 | `--input` | yes | Path to the input file (`.csv` or `.xlsx`). |
 | `--output` | yes | Path to the output `.xlsx` file to create. |
-| `--stress-threshold` | yes | Reversal threshold for the Stress signal (same units as your Stress column). |
-| `--strain-threshold` | yes | Reversal threshold for the Strain signal (same units as your Strain column). |
+| `--stress-threshold` | no | Reversal threshold for the Stress signal (same units as your Stress column). Omit or pass `auto` to auto-compute it — see [Choosing thresholds](#choosing-thresholds). |
+| `--strain-threshold` | no | Reversal threshold for the Strain signal (same units as your Strain column). Omit or pass `auto` to auto-compute it. |
 | `--show-last-cycle` | no | `yes`/`no`, default `no`. The final cycle in a test is often incomplete because the test stopped mid-cycle; set `yes` to keep it anyway (e.g. when you plan to append/compare against later, longer datasets). |
 | `--interactive` | no | Force interactive prompts even if all flags above are also given. |
 
 ## Input file format — important
 
 - Accepted formats: `.csv` or `.xlsx`.
-- The tool reads **columns by position, not by header name**: column 1 is
-  always treated as Time, column 2 as Stress, column 3 as Strain — whatever
-  their header text says. Extra columns beyond the first three are ignored.
-- **Check your actual column order before running.** Real export files do
-  not always follow the Time/Stress/Strain order — for example one dataset
-  used here had the columns as `time, strain, stress` (strain and stress
-  swapped). If your column order isn't Time, Stress, Strain, reorder the
-  columns yourself first (e.g. in Excel, or with a one-line pandas script)
-  before feeding the file in — otherwise the tool will silently treat your
-  Strain column as Stress and vice versa.
+- **If the first three column headers are exactly "time", "stress" and
+  "strain"** (case-insensitive, any order), the tool reorders them by name
+  automatically — several real export files used here actually had the
+  columns as `time, strain, stress` (strain and stress swapped), and this
+  is corrected without you having to do anything.
+- **For any other header text, columns are read by position**: column 1 is
+  Time, column 2 Stress, column 3 Strain, regardless of what they're
+  labeled. Extra columns beyond the first three are ignored.
+- **If your headers don't spell out all three names**, double-check your
+  actual column order before running — if it isn't Time, Stress, Strain,
+  reorder the columns yourself first (e.g. in Excel, or with a one-line
+  pandas script) before feeding the file in, otherwise the tool will
+  silently treat the wrong column as Stress or Strain.
 
 ## Choosing thresholds
 
@@ -177,8 +184,20 @@ or valley — pick it so it is:
 
 Because Stress and Strain typically differ by orders of magnitude (e.g.
 stress ~O(100), strain ~O(0.01)), they need separate, independently-scaled
-thresholds — that's why the tool asks for both. If cycles look merged or
-split in the output, revisit the threshold for that signal.
+thresholds.
+
+**Auto-compute (the default in `run.py`, and in the interactive/flag modes
+when a threshold is left blank / set to `auto`):** the threshold is set to
+5% of that signal's own peak-to-peak range (`max - min`), computed
+separately for Stress and for Strain. This scales automatically with each
+file's amplitude, so the same setting works across datasets without manual
+tuning — see `cyclic_loading_analyzer/detector.py::suggest_threshold`.
+
+If cycles still look merged, split, or miscounted (e.g. Stress and Strain
+report a different number of cycles for what should be the same physical
+cycles), override it manually for that signal — a smaller fraction of the
+range if reversals are being missed, larger if noise is being counted as
+extra cycles.
 
 ## Output workbook
 
@@ -221,7 +240,7 @@ peaks, small-magnitude strain-scale thresholds, and cycle numbering).
 ## Project layout
 
 ```
-run.py                 simplest entry point: fixed thresholds, batch-processes raw_data/ into results/
+run.py                 simplest entry point: auto thresholds, batch-processes raw_data/ into results/
 raw_data/               put your raw data file(s) here for run.py
 results/                run.py writes <name>_result.xlsx here for each raw_data/<name> file
 cyclic_loading_analyzer/
