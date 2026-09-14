@@ -11,3 +11,4 @@ raw_data/*.xls
 raw_data_backup/
 raw_data_backup_merged/
 raw_data_backup_before_ext_threshold_fix/
+raw_data/.pipeline_manifest.json

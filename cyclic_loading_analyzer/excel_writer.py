@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Sequence
 
 from openpyxl import Workbook
-from openpyxl.chart import Reference, ScatterChart, Series
+from openpyxl.chart import LineChart, Reference, ScatterChart, Series
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -330,10 +330,70 @@ def _write_combined_cross_reference_sheet(wb: Workbook, tables: dict[str, Sequen
     return ws
 
 
+SI_SERIES_COLOR = "1F77B4"
+
+
+def _write_si_sheet_and_chart(
+    wb: Workbook,
+    charts_ws: Worksheet,
+    rows: Sequence[tuple[object, float, float, float, float]],
+    ext_name: str,
+) -> None:
+    """Add the "Si" sheet (Cycle, Time, Strain, Extension, Si) and an
+    "Si vs Cycle" chart, to an already-open workbook (before it's saved).
+
+    A LineChart with a category axis, not ScatterChart (which needs a
+    numeric X): the Cycle column holds text labels ("1_1", "1_2", ...)
+    for the paired files, so Si is plotted one point per cycle, evenly
+    spaced by cycle order rather than by its numeric/time value.
+    """
+    ws = wb.create_sheet("Si")
+    headers = ["Cycle", TIME_AXIS_TITLE, axis_label_with_unit("Strain"), axis_label_with_unit(ext_name), "Si"]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = HEADER_FONT
+    for row in rows:
+        ws.append(list(row))
+    for col_idx in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 15
+    ws.freeze_panes = "A2"
+
+    next_row = 1 + 25 * len(charts_ws._charts)
+
+    chart = LineChart()
+    chart.title = "Si vs Cycle"
+    chart.style = 13
+    chart.x_axis.title = "Cycle"
+    chart.y_axis.title = "Si"
+    chart.width = 24
+    chart.height = 12
+
+    last_row = 1 + len(rows)
+    cats = Reference(ws, min_col=1, min_row=2, max_row=last_row)
+    data = Reference(ws, min_col=5, min_row=1, max_row=last_row)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+
+    series = chart.series[0]
+    series.marker.symbol = "circle"
+    series.marker.size = 6
+    series.marker.graphicalProperties.solidFill = SI_SERIES_COLOR
+    series.marker.graphicalProperties.line.solidFill = SI_SERIES_COLOR
+    series.smooth = False
+    series.graphicalProperties.line.width = 15000
+    series.graphicalProperties.line.solidFill = SI_SERIES_COLOR
+    chart.legend.position = "b"
+    chart.legend.overlay = False
+
+    charts_ws.add_chart(chart, f"A{next_row}")
+
+
 def write_workbook(
     output_path: str | Path,
     groups: Sequence[SignalGroup],
     cross_reference_tables: dict[str, Sequence[dict]] | None = None,
+    si_rows: Sequence[tuple[object, float, float, float, float]] | None = None,
+    si_ext_name: str | None = None,
 ) -> None:
     """Write Raw Data, one Results sheet per signal, and Charts.
 
@@ -345,6 +405,10 @@ def write_workbook(
     `cross_reference_tables`, if given, adds one sheet per table plus a
     "Combined" sheet with all of them side by side — see
     `cross_reference.build_cross_reference_tables`.
+
+    `si_rows`/`si_ext_name`, if given, add the "Si" sheet + chart in this
+    same save — see `_write_si_sheet_and_chart` — instead of a caller
+    re-opening the file afterward to append it.
     """
     wb = Workbook()
     wb.remove(wb.active)  # drop default empty sheet
@@ -353,11 +417,14 @@ def write_workbook(
     for group in groups:
         for name, _values, cycles in group.signals:
             _write_results_sheet(wb, f"{name} Results", name, cycles)
-    _add_charts_sheet(wb, groups, layout)
+    charts_ws = _add_charts_sheet(wb, groups, layout)
 
     if cross_reference_tables:
         for name, rows in cross_reference_tables.items():
             _write_simple_table_sheet(wb, name, rows)
         _write_combined_cross_reference_sheet(wb, cross_reference_tables)
+
+    if si_rows is not None:
+        _write_si_sheet_and_chart(wb, charts_ws, si_rows, si_ext_name)
 
     wb.save(str(output_path))

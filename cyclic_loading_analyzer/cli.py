@@ -23,6 +23,7 @@ from .cross_reference import build_cross_reference_tables
 from .cycle_labeling import cycle_labels, peak_to_peak_boundaries, zero_crossing_boundaries
 from .excel_writer import SignalGroup, write_workbook
 from .io_utils import read_combined_data
+from .si import si_rows_lvdt_max, si_rows_zero_crossing
 
 
 def _parse_yes_no(value: str) -> bool:
@@ -224,8 +225,11 @@ def process(
     extension_threshold: float | None,
     show_last_cycle: bool,
     cycle_label_fn=None,
+    si_kind: str | None = None,
+    write_cycle_columns_to: Path | None = None,
 ) -> ProcessResult:
-    """Run detection + write one workbook for a raw_data file.
+    """Run detection once and write the results workbook (and, optionally,
+    the migrated raw_data file) for a raw_data file.
 
     Columns 1-3 are always Time/Stress/Strain. If columns 4-5 are also
     present (a second, independently-sampled Time/<signal> pair — e.g.
@@ -243,6 +247,17 @@ def process(
     cycles into "1_1"/"1_2"/"2_1"/"2_2"/... Has no effect on the Stress/
     Strain Cycle column's numbering scope, nor on files without a
     4th/5th-column signal for the Extension one.
+
+    `si_kind`, one of "zero_crossing" or "lvdt_max" (see `si.py`), adds
+    the "Si" sheet + chart to the output workbook using the cycles
+    already detected here — a no-op if the file has no Extension signal.
+
+    `write_cycle_columns_to`, if given, rewrites the raw_data file at
+    that path in place with the per-row "Cycle" columns (see
+    `cycle_labeling`) — using the SAME detected cycles as the results
+    workbook, instead of a separate caller re-reading and re-detecting
+    them from scratch (see `add_cycle_columns.py`, which this replaces
+    when called through `run.py`).
     """
     main_df, ext_df, ext_name = read_combined_data(input_path)
 
@@ -273,6 +288,8 @@ def process(
     ]
     extension_rows = None
     cross_reference_tables = None
+    si_rows = None
+    ext_time = ext_values = ext_row_labels = None
 
     if ext_df is not None:
         ext_time = ext_df["Time"].to_numpy()
@@ -305,10 +322,53 @@ def process(
             cycle_label_fn,
         )
 
+        if si_kind == "zero_crossing":
+            si_rows = si_rows_zero_crossing(time, stress, strain, stress_cycles, ext_time, ext_values)
+        elif si_kind == "lvdt_max":
+            si_rows = si_rows_lvdt_max(time, strain, ext_cycles, cycle_label_fn)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_workbook(output_path, groups, cross_reference_tables)
+    write_workbook(output_path, groups, cross_reference_tables, si_rows, ext_name)
+
+    if write_cycle_columns_to is not None:
+        _write_cycle_columns(
+            write_cycle_columns_to, time, main_row_labels, stress, strain, ext_time, ext_row_labels, ext_values, ext_name
+        )
 
     return ProcessResult(raw_rows=len(main_df), outcomes=outcomes, extension_rows=extension_rows)
+
+
+def _write_cycle_columns(
+    path: Path,
+    time,
+    main_labels,
+    stress,
+    strain,
+    ext_time,
+    ext_labels,
+    ext_values,
+    ext_name: str | None,
+) -> None:
+    """Rewrite a raw_data file in place with the per-row "Cycle" columns
+    already computed by `process()` — see its `write_cycle_columns_to`.
+    """
+    import pandas as pd
+
+    series_list = [
+        pd.Series(time, name="Time"),
+        pd.Series(main_labels, name="Cycle"),
+        pd.Series(stress, name="Stress"),
+        pd.Series(strain, name="Strain"),
+    ]
+    if ext_time is not None:
+        n = max(len(time), len(ext_time))
+        series_list = [s.reindex(range(n)) for s in series_list]
+        series_list.append(pd.Series(ext_time, name="Time").reindex(range(n)))
+        series_list.append(pd.Series(ext_labels, name="Cycle").reindex(range(n)))
+        series_list.append(pd.Series(ext_values, name=ext_name).reindex(range(n)))
+
+    out = pd.concat(series_list, axis=1)
+    out.to_excel(path, index=False)
 
 
 def main(argv: list[str] | None = None) -> int:
