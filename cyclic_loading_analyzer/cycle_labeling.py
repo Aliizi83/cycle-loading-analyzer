@@ -31,7 +31,7 @@ def _closest_to_zero_time(
     such sample — the one immediately before the actual crossing, since a
     quantization plateau can hold several samples at the same extreme
     value (see the identical rule used for the Stress zero-crossing in
-    `compute_ci.py`).
+    `compute_si.py`).
     """
     mask = (time >= lo_time) & (time <= hi_time)
     idxs = np.where(mask)[0]

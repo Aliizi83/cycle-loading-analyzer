@@ -1,14 +1,14 @@
-"""Compute the Ci parameter for files 16, 17, 18 and add it to their results.
+"""Compute the Si parameter and add it to each file's results.
 
 Run `run.py` first — this adds to the results/<N> - raw_result.xlsx
 workbooks it already produces, rather than regenerating them.
 
-Ci combines each cycle's Strain with the matching Extension reading (the
-4th/5th-column signal, independently sampled — see
-`io_utils.read_combined_data`), at the moment Stress crosses from
-positive to negative within that cycle:
+Two different formulas are used, depending on the file:
 
-    Ci = (Extension / 2) - (strain_i * 70)
+Files 16, 17, 18 — Si anchored on the Stress signal's descending zero
+crossing:
+
+    Si = (Extension / 2) - (strain_i * 70)
 
 For each cycle already detected in the Stress signal (Max at max_time,
 Min at min_time, with Max > 0 and Min < 0 — cycles that don't straddle
@@ -20,10 +20,28 @@ zero are skipped, since there's no descending zero-crossing to find):
 2. Read Strain at that same sample (strain_i) — same row, same file.
 3. In the Extension signal's own (independently-sampled) Time column,
    find the closest Time to that same point and read Extension there.
-4. Ci = (Extension / 2) - (strain_i * 70)
+4. Si = (Extension / 2) - (strain_i * 70)
 
-Adds a "Ci" sheet (Cycle, Time, Strain, Extension, Ci) and a "Ci vs Time"
-chart to the existing output workbook.
+Files 19 and up — Si anchored on the Extension (LVDT) signal's own
+Max per cycle instead:
+
+    Si = (LVDT_max / 2) - (strain_at_LVDT_max_time * 70)
+
+For each cycle detected in the Extension signal itself (its own
+peak-to-peak Max, not a Stress zero-crossing):
+
+1. Take that cycle's own Max value and Max time.
+2. In the main Time column, find the closest Time to the LVDT Max time
+   and read Strain there.
+3. Si = (LVDT_max / 2) - (strain_at_that_time * 70)
+
+Files 19-22 use paired cycle labeling ("1_1", "1_2", "2_1", ...) for the
+"Cycle" column, matching the convention already used for those files'
+other sheets (see `cross_reference.paired_cycle_label`) — every two
+consecutive detected half-cycles are one physical loading cycle.
+
+Adds an "Si" sheet (Cycle, Time, Strain, Extension, Si) and an
+"Si vs Time" chart to the existing output workbook.
 """
 
 from __future__ import annotations
@@ -38,19 +56,23 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from cyclic_loading_analyzer.cli import cycles_for_signal
+from cyclic_loading_analyzer.cross_reference import paired_cycle_label
 from cyclic_loading_analyzer.detector import Cycle
 from cyclic_loading_analyzer.io_utils import read_combined_data
 
-FILE_NUMBERS = [16, 17, 18]
+ZERO_CROSSING_FILE_NUMBERS = {16, 17, 18}
+LVDT_MAX_FILE_NUMBERS = {19, 20, 21, 22, 23, 24, 25, 26, 27, 28}
+PAIRED_CYCLE_FILE_NUMBERS = {19, 20, 21, 22}
 SHOW_LAST_CYCLE = True
 STRESS_THRESHOLD = None  # None = auto-compute, matching run.py
+EXTENSION_THRESHOLD = None  # None = auto-compute, matching run.py
 
 PROJECT_DIR = Path(__file__).parent
 RAW_DIR = PROJECT_DIR / "raw_data"
 RESULTS_DIR = PROJECT_DIR / "results"
 
 HEADER_FONT = Font(bold=True)
-CI_SERIES_COLOR = "1F77B4"
+SI_SERIES_COLOR = "1F77B4"
 
 
 def _find_raw_path(number: int) -> Path:
@@ -95,10 +117,12 @@ def _nearest_value(target_time: float, other_time: np.ndarray, other_value: np.n
     return float(other_value[best])
 
 
-def compute_ci_rows(raw_path: Path) -> tuple[list[tuple[int, float, float, float, float]], str]:
+def _compute_si_zero_crossing(
+    raw_path: Path,
+) -> tuple[list[tuple[object, float, float, float, float]], str]:
     main_df, ext_df, ext_name = read_combined_data(raw_path)
     if ext_df is None:
-        raise ValueError(f"{raw_path.name} has no 4th/5th-column signal to compute Ci against")
+        raise ValueError(f"{raw_path.name} has no 4th/5th-column signal to compute Si against")
 
     time = main_df["Time"].to_numpy()
     stress = main_df["Stress"].to_numpy()
@@ -119,20 +143,58 @@ def compute_ci_rows(raw_path: Path) -> tuple[list[tuple[int, float, float, float
             continue
         t_zero, strain_i = crossing
         ext_at_zero = _nearest_value(t_zero, ext_time, ext_value)
-        ci = (ext_at_zero / 2) - (strain_i * 70)
-        rows.append((cycle.cycle_number, t_zero, strain_i, ext_at_zero, ci))
+        si = (ext_at_zero / 2) - (strain_i * 70)
+        rows.append((cycle.cycle_number, t_zero, strain_i, ext_at_zero, si))
     return rows, ext_name
 
 
-def _write_ci_sheet_and_chart(
-    output_path: Path, rows: list[tuple[int, float, float, float, float]], ext_name: str
+def _compute_si_lvdt_max(
+    raw_path: Path, cycle_label_fn
+) -> tuple[list[tuple[object, float, float, float, float]], str]:
+    main_df, ext_df, ext_name = read_combined_data(raw_path)
+    if ext_df is None:
+        raise ValueError(f"{raw_path.name} has no 4th/5th-column signal to compute Si against")
+
+    main_time = main_df["Time"].to_numpy()
+    strain = main_df["Strain"].to_numpy()
+
+    ext_time = ext_df["Time"].to_numpy()
+    ext_value = ext_df[ext_name].to_numpy()
+
+    ext_cycles: list[Cycle]
+    ext_cycles, _threshold, _merged = cycles_for_signal(
+        ext_time, ext_value, EXTENSION_THRESHOLD, SHOW_LAST_CYCLE
+    )
+
+    rows = []
+    for cycle in ext_cycles:
+        lvdt_max = cycle.max_value
+        lvdt_max_time = cycle.max_time
+        strain_i = _nearest_value(lvdt_max_time, main_time, strain)
+        si = (lvdt_max / 2) - (strain_i * 70)
+        label = cycle_label_fn(cycle.cycle_number) if cycle_label_fn else cycle.cycle_number
+        rows.append((label, lvdt_max_time, strain_i, lvdt_max, si))
+    return rows, ext_name
+
+
+def compute_si_rows(number: int, raw_path: Path) -> tuple[list[tuple[object, float, float, float, float]], str]:
+    if number in ZERO_CROSSING_FILE_NUMBERS:
+        return _compute_si_zero_crossing(raw_path)
+    cycle_label_fn = paired_cycle_label if number in PAIRED_CYCLE_FILE_NUMBERS else None
+    return _compute_si_lvdt_max(raw_path, cycle_label_fn)
+
+
+def _write_si_sheet_and_chart(
+    output_path: Path, rows: list[tuple[object, float, float, float, float]], ext_name: str
 ) -> None:
     wb = load_workbook(output_path)
     if "Ci" in wb.sheetnames:
-        del wb["Ci"]
-    ws = wb.create_sheet("Ci")
+        del wb["Ci"]  # legacy sheet name from before the Ci -> Si rename
+    if "Si" in wb.sheetnames:
+        del wb["Si"]
+    ws = wb.create_sheet("Si")
 
-    headers = ["Cycle", "Time", "Strain", ext_name, "Ci"]
+    headers = ["Cycle", "Time", "Strain", ext_name, "Si"]
     ws.append(headers)
     for cell in ws[1]:
         cell.font = HEADER_FONT
@@ -143,13 +205,21 @@ def _write_ci_sheet_and_chart(
     ws.freeze_panes = "A2"
 
     charts_ws = wb["Charts"]
+
+    def _chart_title(c) -> str | None:
+        try:
+            return c.title.tx.rich.p[0].r[0].t
+        except (AttributeError, IndexError, TypeError):
+            return None
+
+    charts_ws._charts = [c for c in charts_ws._charts if _chart_title(c) != "Ci vs Time"]
     next_row = 1 + 25 * len(charts_ws._charts)
 
     chart = ScatterChart()
-    chart.title = "Ci vs Time"
+    chart.title = "Si vs Time"
     chart.style = 13
     chart.x_axis.title = "Time"
-    chart.y_axis.title = "Ci"
+    chart.y_axis.title = "Si"
     chart.width = 24
     chart.height = 12
 
@@ -159,11 +229,11 @@ def _write_ci_sheet_and_chart(
     series = Series(yvalues, xvalues, title_from_data=True)
     series.marker.symbol = "circle"
     series.marker.size = 6
-    series.marker.graphicalProperties.solidFill = CI_SERIES_COLOR
-    series.marker.graphicalProperties.line.solidFill = CI_SERIES_COLOR
+    series.marker.graphicalProperties.solidFill = SI_SERIES_COLOR
+    series.marker.graphicalProperties.line.solidFill = SI_SERIES_COLOR
     series.smooth = False
     series.graphicalProperties.line.width = 15000
-    series.graphicalProperties.line.solidFill = CI_SERIES_COLOR
+    series.graphicalProperties.line.solidFill = SI_SERIES_COLOR
     chart.series.append(series)
     chart.legend.position = "b"
     chart.legend.overlay = False
@@ -173,15 +243,15 @@ def _write_ci_sheet_and_chart(
 
 
 def main() -> int:
-    for number in FILE_NUMBERS:
+    for number in sorted(ZERO_CROSSING_FILE_NUMBERS | LVDT_MAX_FILE_NUMBERS):
         raw_path = _find_raw_path(number)
         output_path = RESULTS_DIR / f"{raw_path.stem}_result.xlsx"
         if not output_path.exists():
             raise SystemExit(f"{output_path} not found — run run.py first.")
 
-        rows, ext_name = compute_ci_rows(raw_path)
-        _write_ci_sheet_and_chart(output_path, rows, ext_name)
-        print(f"{raw_path.name}: added Ci sheet with {len(rows)} rows -> {output_path.name}")
+        rows, ext_name = compute_si_rows(number, raw_path)
+        _write_si_sheet_and_chart(output_path, rows, ext_name)
+        print(f"{raw_path.name}: added Si sheet with {len(rows)} rows -> {output_path.name}")
 
     return 0
 
