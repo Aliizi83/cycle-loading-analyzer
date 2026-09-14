@@ -34,18 +34,24 @@ TIME_AXIS_TITLE = "Time (min)"
 
 
 def unit_for(name: str) -> str:
-    """The physical unit for a signal name.
+    """The physical unit for a signal name, or "" if it's dimensionless.
 
-    Stress and Strain are MPa; any other signal in this codebase is the
-    independently-sampled third signal (e.g. Extension from an LVDT),
-    measured in mm.
+    Stress is MPa; Strain is a dimensionless ratio, so it gets no unit
+    suffix; any other signal in this codebase is the independently-
+    sampled third signal (e.g. Extension from an LVDT), measured in mm.
     """
-    return "MPa" if name in ("Stress", "Strain") else "mm"
+    if name == "Stress":
+        return "MPa"
+    if name == "Strain":
+        return ""
+    return "mm"
 
 
 def axis_label_with_unit(name: str) -> str:
-    """A signal's axis/column label with its unit appended, e.g. "Stress (MPa)"."""
-    return f"{name} ({unit_for(name)})"
+    """A signal's axis/column label with its unit appended, e.g. "Stress (MPa)" -
+    or just the bare name for a dimensionless signal like Strain."""
+    unit = unit_for(name)
+    return f"{name} ({unit})" if unit else name
 
 
 @dataclass(frozen=True)
@@ -134,6 +140,8 @@ def _write_results_sheet(
 ) -> Worksheet:
     ws = wb.create_sheet(sheet_name)
     unit = unit_for(signal_name)
+    max_label = f"Max ({unit})" if unit else "Max"
+    min_label = f"Min ({unit})" if unit else "Min"
 
     ws.merge_cells("A1:C1")
     ws["A1"] = "Max"
@@ -143,7 +151,7 @@ def _write_results_sheet(
         ws[coord].font = TITLE_FONT
         ws[coord].alignment = CENTER
 
-    headers = ["Cycle", TIME_AXIS_TITLE, f"Max ({unit})", "Cycle", TIME_AXIS_TITLE, f"Min ({unit})"]
+    headers = ["Cycle", TIME_AXIS_TITLE, max_label, "Cycle", TIME_AXIS_TITLE, min_label]
     for col_idx, header in enumerate(headers, start=1):
         cell = ws.cell(row=2, column=col_idx, value=header)
         cell.font = HEADER_FONT
