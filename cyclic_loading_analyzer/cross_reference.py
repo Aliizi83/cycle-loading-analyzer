@@ -46,33 +46,34 @@ def main_anchor_table(
     main_time: np.ndarray,
     other_values: np.ndarray,
     other_name: str,
-    ext_time: np.ndarray,
-    ext_values: np.ndarray,
-    ext_name: str,
+    ext_time: np.ndarray | None = None,
+    ext_values: np.ndarray | None = None,
+    ext_name: str | None = None,
     cycle_label_fn: CycleLabelFn | None = None,
 ) -> list[dict]:
     """One row per cycle, anchored on a Stress or Strain Max/Min.
 
     The other main-group signal (Strain if anchor is Stress, or vice
-    versa) is read at the exact same sample. The extension signal is
-    read at its nearest available time to the anchor's.
+    versa) is read at the exact same sample. The extension signal, if
+    given (some files have only Stress/Strain, no third signal), is read
+    at its nearest available time to the anchor's.
     """
     rows = []
     for cycle in cycles:
         t = cycle.max_time if which == "max" else cycle.min_time
         v = cycle.max_value if which == "max" else cycle.min_value
         idx = int(np.searchsorted(main_time, t))
-        ext_idx = nearest_index(t, ext_time)
-        rows.append(
-            {
-                "Cycle": cycle_label_fn(cycle.cycle_number) if cycle_label_fn else cycle.cycle_number,
-                TIME_AXIS_TITLE: t,
-                axis_label_with_unit(anchor_name): v,
-                axis_label_with_unit(other_name): float(other_values[idx]),
-                f"{ext_name} Time (min)": float(ext_time[ext_idx]),
-                axis_label_with_unit(ext_name): float(ext_values[ext_idx]),
-            }
-        )
+        row = {
+            "Cycle": cycle_label_fn(cycle.cycle_number) if cycle_label_fn else cycle.cycle_number,
+            TIME_AXIS_TITLE: t,
+            axis_label_with_unit(anchor_name): v,
+            axis_label_with_unit(other_name): float(other_values[idx]),
+        }
+        if ext_time is not None:
+            ext_idx = nearest_index(t, ext_time)
+            row[f"{ext_name} Time (min)"] = float(ext_time[ext_idx])
+            row[axis_label_with_unit(ext_name)] = float(ext_values[ext_idx])
+        rows.append(row)
     return rows
 
 
@@ -114,70 +115,37 @@ def build_cross_reference_tables(
     strain: np.ndarray,
     stress_cycles: Sequence[Cycle],
     strain_cycles: Sequence[Cycle],
-    ext_time: np.ndarray,
-    ext_values: np.ndarray,
-    ext_name: str,
-    ext_cycles: Sequence[Cycle],
+    ext_time: np.ndarray | None = None,
+    ext_values: np.ndarray | None = None,
+    ext_name: str | None = None,
+    ext_cycles: Sequence[Cycle] | None = None,
     cycle_label_fn: CycleLabelFn | None = None,
 ) -> dict[str, list[dict]]:
-    """All 6 individual cross-reference tables, keyed by sheet name.
+    """The Stress/Strain cross-reference tables, plus the Extension ones
+    too if the file has a third signal, keyed by sheet name.
 
     Pass `cycle_label_fn` (e.g. `paired_cycle_label`) to relabel the
     "Cycle" column in every table instead of using the plain cycle number.
     """
-    return {
+    tables = {
         "Stress Max": main_anchor_table(
-            stress_cycles,
-            "max",
-            "Stress",
-            main_time,
-            strain,
-            "Strain",
-            ext_time,
-            ext_values,
-            ext_name,
-            cycle_label_fn,
+            stress_cycles, "max", "Stress", main_time, strain, "Strain", ext_time, ext_values, ext_name, cycle_label_fn
         ),
         "Stress Min": main_anchor_table(
-            stress_cycles,
-            "min",
-            "Stress",
-            main_time,
-            strain,
-            "Strain",
-            ext_time,
-            ext_values,
-            ext_name,
-            cycle_label_fn,
+            stress_cycles, "min", "Stress", main_time, strain, "Strain", ext_time, ext_values, ext_name, cycle_label_fn
         ),
         "Strain Max": main_anchor_table(
-            strain_cycles,
-            "max",
-            "Strain",
-            main_time,
-            stress,
-            "Stress",
-            ext_time,
-            ext_values,
-            ext_name,
-            cycle_label_fn,
+            strain_cycles, "max", "Strain", main_time, stress, "Stress", ext_time, ext_values, ext_name, cycle_label_fn
         ),
         "Strain Min": main_anchor_table(
-            strain_cycles,
-            "min",
-            "Strain",
-            main_time,
-            stress,
-            "Stress",
-            ext_time,
-            ext_values,
-            ext_name,
-            cycle_label_fn,
-        ),
-        f"{ext_name} Max": extension_anchor_table(
-            ext_cycles, "max", ext_name, main_time, stress, strain, cycle_label_fn
-        ),
-        f"{ext_name} Min": extension_anchor_table(
-            ext_cycles, "min", ext_name, main_time, stress, strain, cycle_label_fn
+            strain_cycles, "min", "Strain", main_time, stress, "Stress", ext_time, ext_values, ext_name, cycle_label_fn
         ),
     }
+    if ext_time is not None:
+        tables[f"{ext_name} Max"] = extension_anchor_table(
+            ext_cycles, "max", ext_name, main_time, stress, strain, cycle_label_fn
+        )
+        tables[f"{ext_name} Min"] = extension_anchor_table(
+            ext_cycles, "min", ext_name, main_time, stress, strain, cycle_label_fn
+        )
+    return tables

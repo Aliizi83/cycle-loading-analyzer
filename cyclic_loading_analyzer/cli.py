@@ -287,9 +287,8 @@ def process(
         SignalOutcome("Strain", len(strain_cycles), strain_threshold, strain_merged),
     ]
     extension_rows = None
-    cross_reference_tables = None
     si_rows = None
-    ext_time = ext_values = ext_row_labels = None
+    ext_time = ext_values = ext_row_labels = ext_cycles = None
 
     if ext_df is not None:
         ext_time = ext_df["Time"].to_numpy()
@@ -309,23 +308,25 @@ def process(
         outcomes.append(SignalOutcome(ext_name, len(ext_cycles), ext_threshold, ext_merged))
         extension_rows = len(ext_df)
 
-        cross_reference_tables = build_cross_reference_tables(
-            time,
-            stress,
-            strain,
-            stress_cycles,
-            strain_cycles,
-            ext_time,
-            ext_values,
-            ext_name,
-            ext_cycles,
-            cycle_label_fn,
-        )
-
         if si_kind == "zero_crossing":
             si_rows = si_rows_zero_crossing(time, stress, strain, stress_cycles, ext_time, ext_values)
         elif si_kind == "lvdt_max":
             si_rows = si_rows_lvdt_max(time, strain, ext_cycles, cycle_label_fn)
+
+    # Stress/Strain cross-reference tables always apply; the Extension
+    # ones are added too when the file has a third signal.
+    cross_reference_tables = build_cross_reference_tables(
+        time,
+        stress,
+        strain,
+        stress_cycles,
+        strain_cycles,
+        ext_time,
+        ext_values,
+        ext_name,
+        ext_cycles,
+        cycle_label_fn,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_workbook(output_path, groups, cross_reference_tables, si_rows, ext_name)
