@@ -20,6 +20,7 @@ from .detector import (
     trailing_incomplete_extremum,
 )
 from .cross_reference import build_cross_reference_tables
+from .cycle_labeling import cycle_labels, peak_to_peak_boundaries, zero_crossing_boundaries
 from .excel_writer import SignalGroup, write_workbook
 from .io_utils import read_combined_data
 
@@ -234,9 +235,14 @@ def process(
     Pass `None` for any threshold to auto-compute it as a fraction of that
     signal's own peak-to-peak range (see `detector.suggest_threshold`).
 
-    `cycle_label_fn`, if given, relabels the "Cycle" column in the
-    cross-reference sheets (see `cross_reference.build_cross_reference_tables`);
-    has no effect on files without a 4th/5th-column signal.
+    `cycle_label_fn`, if given, relabels every "Cycle" column produced —
+    the cross-reference sheets (see
+    `cross_reference.build_cross_reference_tables`) and the per-row Cycle
+    columns in "Raw Data" (see `cycle_labeling.cycle_labels`) — e.g.
+    `cross_reference.paired_cycle_label` to fold every two consecutive
+    cycles into "1_1"/"1_2"/"2_1"/"2_2"/... Has no effect on the Stress/
+    Strain Cycle column's numbering scope, nor on files without a
+    4th/5th-column signal for the Extension one.
     """
     main_df, ext_df, ext_name = read_combined_data(input_path)
 
@@ -251,10 +257,14 @@ def process(
         time, strain, strain_threshold, show_last_cycle
     )
 
+    main_boundaries = zero_crossing_boundaries(time, stress, stress_cycles)
+    main_row_labels = cycle_labels(time, main_boundaries, cycle_label_fn)
+
     groups = [
         SignalGroup(
             time=time,
             signals=[("Stress", stress, stress_cycles), ("Strain", strain, strain_cycles)],
+            cycle_labels=main_row_labels,
         )
     ]
     outcomes = [
@@ -270,7 +280,15 @@ def process(
         ext_cycles, ext_threshold, ext_merged = cycles_for_signal(
             ext_time, ext_values, extension_threshold, show_last_cycle
         )
-        groups.append(SignalGroup(time=ext_time, signals=[(ext_name, ext_values, ext_cycles)]))
+        ext_boundaries = peak_to_peak_boundaries(ext_cycles)
+        ext_row_labels = cycle_labels(ext_time, ext_boundaries, cycle_label_fn)
+        groups.append(
+            SignalGroup(
+                time=ext_time,
+                signals=[(ext_name, ext_values, ext_cycles)],
+                cycle_labels=ext_row_labels,
+            )
+        )
         outcomes.append(SignalOutcome(ext_name, len(ext_cycles), ext_threshold, ext_merged))
         extension_rows = len(ext_df)
 

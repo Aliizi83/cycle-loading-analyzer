@@ -22,6 +22,24 @@ def peek_column_count(path: str | Path) -> int:
     return _read_table(path, nrows=0).shape[1]
 
 
+def _drop_cycle_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop any column named "Cycle" (case-insensitive).
+
+    `add_cycle_columns.py` inserts a per-row cycle-number label next to
+    each signal (see `cycle_labeling.py`); that's derived output, not a
+    signal to read, so it's excluded before positional Time/Stress/Strain
+    (or Time/<signal>) detection runs. A no-op for files without one.
+
+    Matches by *prefix*, not exact equality: a file with two "Cycle"
+    columns (one per signal group) has the second renamed "Cycle.1" by
+    pandas on read (duplicate headers), same as "Time" -> "Time.1" — an
+    exact match would only catch the first and misread the second as a
+    real data column.
+    """
+    keep = [c for c in df.columns if not str(c).strip().lower().startswith("cycle")]
+    return df[keep]
+
+
 def _extract_signal_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Turn a DataFrame's first 3 columns into a clean Time/Stress/Strain frame.
 
@@ -55,7 +73,7 @@ def read_raw_data(path: str | Path) -> pd.DataFrame:
     Extra columns beyond the first three are ignored. See
     `read_combined_data` to also read a Time/<signal> pair from columns 4-5.
     """
-    df = _read_table(path)
+    df = _drop_cycle_columns(_read_table(path))
     if df.shape[1] < 3:
         raise ValueError(
             f"Input file must have at least 3 columns (Time, Stress, Strain); found {df.shape[1]}"
@@ -82,7 +100,7 @@ def read_combined_data(
     second_df with columns ["Time", <signal name>] or None if columns 4-5
     aren't present or are entirely blank, signal_name or None).
     """
-    df = _read_table(path)
+    df = _drop_cycle_columns(_read_table(path))
     if df.shape[1] < 3:
         raise ValueError(
             f"Input file must have at least 3 columns (Time, Stress, Strain); found {df.shape[1]}"

@@ -9,3 +9,4 @@ raw_data/*.xlsx
 raw_data/*.csv
 raw_data/*.xls
 raw_data_backup/
+raw_data_backup_merged/

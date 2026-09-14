@@ -38,10 +38,14 @@ class SignalGroup:
     `time` is that shared time base. `signals` is a list of
     (name, values, cycles) — `values` is the raw signal aligned to `time`
     (same length), `cycles` are its already-detected Max/Min pairs.
+    `cycle_labels`, if given (same length as `time`), is written as a
+    "Cycle" column right before the signal columns — see
+    `cycle_labeling.cycle_labels`.
     """
 
     time: Sequence[float]
     signals: Sequence[tuple[str, Sequence[float], Sequence[Cycle]]]
+    cycle_labels: Sequence[object] | None = None
 
 
 def _write_raw_data_sheet(
@@ -65,6 +69,9 @@ def _write_raw_data_sheet(
         value_cols = []
         header_row.append("Time")
         col += 1
+        if group.cycle_labels is not None:
+            header_row.append("Cycle")
+            col += 1
         for name, _values, _cycles in group.signals:
             header_row.append(name)
             value_cols.append(col)
@@ -83,13 +90,17 @@ def _write_raw_data_sheet(
     for r in range(max_rows):
         row: list[object] = []
         for gi, group in enumerate(groups):
-            _time_col, value_cols, n_rows = layout[gi]
+            _time_col, _value_cols, n_rows = layout[gi]
             if r < n_rows:
                 row.append(group.time[r])
-                for vi, (_name, values, _cycles) in enumerate(group.signals):
+                if group.cycle_labels is not None:
+                    row.append(group.cycle_labels[r])
+                for _name, values, _cycles in group.signals:
                     row.append(values[r])
             else:
                 row.append(None)
+                if group.cycle_labels is not None:
+                    row.append(None)
                 row.extend([None] * len(group.signals))
             if gi < len(groups) - 1:
                 row.append(None)  # spacer
