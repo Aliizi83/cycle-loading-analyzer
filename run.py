@@ -1,19 +1,27 @@
-"""Simplified fixed-configuration batch runner.
+"""One-command batch pipeline: raw data -> results -> Si.
 
 No CLI flags, no interactive prompts: drop one or more raw data files into
 raw_data/, then run:
 
     python run.py
 
-Each file is processed independently. For raw_data/<name>.xlsx, the
-output is written to results/<name>_result.xlsx — one workbook with every
-signal the file carries: Stress + Strain (columns 1-3, always), plus a
-third signal like Extension (columns 4-5, independently sampled) when
-present.
+This runs the full pipeline in one go, every time:
 
-Thresholds are auto-computed per file (see the constants below) as a
-fraction of each signal's own peak-to-peak range, so files with different
-amplitudes don't need separate manual tuning. Set a constant to a fixed
+1. `add_cycle_columns`: rewrites every raw_data file in place, adding the
+   per-row "Cycle" columns next to Stress/Strain and next to Extension
+   (if present). Safe to redo on every run — it always rebuilds from the
+   original 3/5 signal columns.
+2. For each raw_data/<name>.xlsx, writes results/<name>_result.xlsx — one
+   workbook with every signal the file carries: Stress + Strain (columns
+   1-3, always), plus a third signal like Extension (columns 4-5,
+   independently sampled) when present.
+3. `compute_si`: adds the Si sheet + chart to every results workbook that
+   has an Extension signal.
+
+Thresholds are auto-computed per file (see the constants below) as an
+adaptive fraction of each signal's own peak-to-peak range — see
+`detector.suggest_threshold` for how it handles ratcheting tests, where
+early cycles are much smaller than later ones. Set a constant to a fixed
 number instead of None to override auto-computation for every file.
 """
 
@@ -23,6 +31,8 @@ import re
 import sys
 from pathlib import Path
 
+import add_cycle_columns
+import compute_si
 from cyclic_loading_analyzer.cli import process
 from cyclic_loading_analyzer.cross_reference import paired_cycle_label
 
@@ -61,6 +71,10 @@ def main() -> int:
             "run this script again."
         )
 
+    print("=== Step 1/3: adding Cycle columns to raw_data files ===", flush=True)
+    add_cycle_columns.main()
+
+    print("\n=== Step 2/3: generating results/ workbooks ===", flush=True)
     for input_path in input_files:
         output_path = OUTPUT_DIR / f"{input_path.stem}_result.xlsx"
         cycle_label_fn = paired_cycle_label if _file_number(input_path) in PAIRED_CYCLE_FILE_NUMBERS else None
@@ -77,13 +91,18 @@ def main() -> int:
         parts = [f"{o.n_cycles} {o.name.lower()} cycles [threshold {o.threshold:g}]" for o in result.outcomes]
         print(
             f"{input_path.name} -> {output_path.relative_to(PROJECT_DIR)} "
-            f"({', '.join(parts)}, {result.raw_rows} raw rows)"
+            f"({', '.join(parts)}, {result.raw_rows} raw rows)",
+            flush=True,
         )
 
         merged_parts = [f"{o.reversals_merged} {o.name.lower()}" for o in result.outcomes if o.reversals_merged]
         if merged_parts:
-            print(f"    removed brief secondary reversals: {', '.join(merged_parts)}")
+            print(f"    removed brief secondary reversals: {', '.join(merged_parts)}", flush=True)
 
+    print("\n=== Step 3/3: computing Si ===", flush=True)
+    compute_si.main()
+
+    print("\nDone.", flush=True)
     return 0
 
 

@@ -186,7 +186,7 @@ def cycles_for_signal(
     Returns (cycles, threshold_used, reversals_merged_count).
     """
     if threshold is None:
-        threshold = suggest_threshold(values)
+        threshold = suggest_threshold(time, values)
 
     extrema = detect_extrema(time, values, threshold)
     merged = merge_secondary_reversals(extrema)

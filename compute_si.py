@@ -1,7 +1,9 @@
 """Compute the Si parameter and add it to each file's results.
 
-Run `run.py` first — this adds to the results/<N> - raw_result.xlsx
-workbooks it already produces, rather than regenerating them.
+Called automatically as the last step of `run.py` — this adds to the
+results/<N> - raw_result.xlsx workbooks it already produced, rather than
+regenerating them. Can also be run standalone (`python compute_si.py`)
+to only refresh the Si sheets, as long as results/ already exists.
 
 Two different formulas are used, depending on the file:
 
@@ -51,13 +53,14 @@ from pathlib import Path
 
 import numpy as np
 from openpyxl import load_workbook
-from openpyxl.chart import Reference, ScatterChart, Series
+from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from cyclic_loading_analyzer.cli import cycles_for_signal
 from cyclic_loading_analyzer.cross_reference import paired_cycle_label
 from cyclic_loading_analyzer.detector import Cycle
+from cyclic_loading_analyzer.excel_writer import TIME_AXIS_TITLE, axis_label_with_unit
 from cyclic_loading_analyzer.io_utils import read_combined_data
 
 ZERO_CROSSING_FILE_NUMBERS = {16, 17, 18}
@@ -149,7 +152,7 @@ def _compute_si_zero_crossing(
 
 
 def _compute_si_lvdt_max(
-    raw_path: Path, cycle_label_fn
+    raw_path: Path, cycle_label_fn, extension_threshold: float | None
 ) -> tuple[list[tuple[object, float, float, float, float]], str]:
     main_df, ext_df, ext_name = read_combined_data(raw_path)
     if ext_df is None:
@@ -163,7 +166,7 @@ def _compute_si_lvdt_max(
 
     ext_cycles: list[Cycle]
     ext_cycles, _threshold, _merged = cycles_for_signal(
-        ext_time, ext_value, EXTENSION_THRESHOLD, SHOW_LAST_CYCLE
+        ext_time, ext_value, extension_threshold, SHOW_LAST_CYCLE
     )
 
     rows = []
@@ -181,7 +184,7 @@ def compute_si_rows(number: int, raw_path: Path) -> tuple[list[tuple[object, flo
     if number in ZERO_CROSSING_FILE_NUMBERS:
         return _compute_si_zero_crossing(raw_path)
     cycle_label_fn = paired_cycle_label if number in PAIRED_CYCLE_FILE_NUMBERS else None
-    return _compute_si_lvdt_max(raw_path, cycle_label_fn)
+    return _compute_si_lvdt_max(raw_path, cycle_label_fn, EXTENSION_THRESHOLD)
 
 
 def _write_si_sheet_and_chart(
@@ -194,7 +197,7 @@ def _write_si_sheet_and_chart(
         del wb["Si"]
     ws = wb.create_sheet("Si")
 
-    headers = ["Cycle", "Time", "Strain", ext_name, "Si"]
+    headers = ["Cycle", TIME_AXIS_TITLE, axis_label_with_unit("Strain"), axis_label_with_unit(ext_name), "Si"]
     ws.append(headers)
     for cell in ws[1]:
         cell.font = HEADER_FONT
@@ -212,21 +215,30 @@ def _write_si_sheet_and_chart(
         except (AttributeError, IndexError, TypeError):
             return None
 
-    charts_ws._charts = [c for c in charts_ws._charts if _chart_title(c) != "Ci vs Time"]
+    charts_ws._charts = [
+        c for c in charts_ws._charts if _chart_title(c) not in ("Ci vs Time", "Si vs Time")
+    ]
     next_row = 1 + 25 * len(charts_ws._charts)
 
-    chart = ScatterChart()
-    chart.title = "Si vs Time"
+    # A LineChart with a category axis (not ScatterChart, which needs a
+    # numeric X) — the Cycle column holds text labels ("1_1", "1_2", ...)
+    # for the paired files, so Si is plotted one point per cycle, evenly
+    # spaced by cycle order rather than by its numeric/time value.
+    chart = LineChart()
+    chart.title = "Si vs Cycle"
     chart.style = 13
-    chart.x_axis.title = "Time"
+    chart.x_axis.title = "Cycle"
     chart.y_axis.title = "Si"
     chart.width = 24
     chart.height = 12
 
     last_row = 1 + len(rows)
-    xvalues = Reference(ws, min_col=2, min_row=2, max_row=last_row)
-    yvalues = Reference(ws, min_col=5, min_row=1, max_row=last_row)
-    series = Series(yvalues, xvalues, title_from_data=True)
+    cats = Reference(ws, min_col=1, min_row=2, max_row=last_row)
+    data = Reference(ws, min_col=5, min_row=1, max_row=last_row)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+
+    series = chart.series[0]
     series.marker.symbol = "circle"
     series.marker.size = 6
     series.marker.graphicalProperties.solidFill = SI_SERIES_COLOR
@@ -234,7 +246,6 @@ def _write_si_sheet_and_chart(
     series.smooth = False
     series.graphicalProperties.line.width = 15000
     series.graphicalProperties.line.solidFill = SI_SERIES_COLOR
-    chart.series.append(series)
     chart.legend.position = "b"
     chart.legend.overlay = False
 
@@ -251,7 +262,7 @@ def main() -> int:
 
         rows, ext_name = compute_si_rows(number, raw_path)
         _write_si_sheet_and_chart(output_path, rows, ext_name)
-        print(f"{raw_path.name}: added Si sheet with {len(rows)} rows -> {output_path.name}")
+        print(f"{raw_path.name}: added Si sheet with {len(rows)} rows -> {output_path.name}", flush=True)
 
     return 0
 

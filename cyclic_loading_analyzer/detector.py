@@ -21,17 +21,6 @@ ExtremaType = Literal["Max", "Min"]
 DEFAULT_THRESHOLD_FRACTION = 0.05
 
 
-def suggest_threshold(values: Sequence[float], fraction: float = DEFAULT_THRESHOLD_FRACTION) -> float:
-    """Suggest a hysteresis threshold as a fraction of the signal's peak-to-peak range.
-
-    Scales automatically with each signal's own amplitude, so the same
-    fraction works whether the column is stress (~O(100)) or strain
-    (~O(0.01)) and across datasets with different amplitudes.
-    """
-    arr = np.asarray(values, dtype=float)
-    return float((arr.max() - arr.min()) * fraction)
-
-
 @dataclass(frozen=True)
 class Extremum:
     time: float
@@ -199,6 +188,94 @@ def merge_secondary_reversals(
                 i += 1
 
     return extrema
+
+
+DEFAULT_THRESHOLD_DECAY = 0.75
+DEFAULT_THRESHOLD_FLOOR_FRACTION = 1e-4
+EXPLOSION_GROWTH_FACTOR = 3.0
+
+
+def suggest_threshold(
+    time: Sequence[float],
+    values: Sequence[float],
+    fraction: float = DEFAULT_THRESHOLD_FRACTION,
+    decay: float = DEFAULT_THRESHOLD_DECAY,
+    floor_fraction: float = DEFAULT_THRESHOLD_FLOOR_FRACTION,
+) -> float:
+    """Suggest a hysteresis threshold, adapting to ratcheting tests.
+
+    A fixed fraction of the signal's FULL peak-to-peak range works for a
+    constant-amplitude test, but badly under-detects a ratcheting test
+    where the swing amplitude grows a lot over the recording: early,
+    small-amplitude cycles fall below that single global threshold and
+    are missed entirely, even though they're perfectly real reversals
+    (confirmed against raw data — several files' first ~10-25 real
+    Max/Min pairs were silently dropped this way).
+
+    This starts from that same fraction-of-range value as a ceiling, then
+    searches downward (geometrically, by `decay` each step) for the
+    smallest threshold that still gives the WIDEST stable run of
+    confirmed-reversal counts — a "plateau": many consecutive,
+    shrinking candidate thresholds that all confirm exactly the same
+    reversals. Once the threshold drops below the amplitude of a real
+    small cycle, the confirmed count jumps up and then holds flat until
+    the threshold gets low enough to start confirming noise as spurious
+    reversals, which is unstable (the count keeps climbing) rather than
+    a plateau. The middle of the widest plateau is a good balance:
+    comfortably below the smallest real cycle's amplitude, comfortably
+    above where noise starts getting confirmed.
+
+    The descent stops as soon as the RAW (pre-merge) reversal count
+    explodes relative to what's been seen so far — a sign the threshold
+    has dropped into sample noise, where every little wiggle gets
+    confirmed. This is checked before the expensive
+    `merge_secondary_reversals` call (whose cost grows with the SQUARE of
+    the extrema count) specifically so a noisy signal can't make this
+    scan blow up: on one real file, letting the descent continue into
+    noise territory took the extrema count from 88 to 272 to 394 in three
+    steps, with `merge_secondary_reversals` alone taking almost a second
+    per step and climbing — for a search that's supposed to take a
+    fraction of a second total.
+    """
+    time = np.asarray(time, dtype=float)
+    values = np.asarray(values, dtype=float)
+    value_range = float(values.max() - values.min())
+    if value_range <= 0:
+        return 0.0
+
+    ceiling = value_range * fraction
+    floor = value_range * floor_fraction
+
+    candidates: list[float] = []
+    counts: list[int] = []
+    max_raw_count = 0
+    c = ceiling
+    while c > floor:
+        raw_extrema = detect_extrema(time, values, c)
+        if max_raw_count and len(raw_extrema) > EXPLOSION_GROWTH_FACTOR * max_raw_count:
+            break
+        max_raw_count = max(max_raw_count, len(raw_extrema))
+        candidates.append(c)
+        counts.append(len(merge_secondary_reversals(raw_extrema)))
+        c *= decay
+
+    if not candidates:
+        return ceiling
+
+    best_start = best_len = 0
+    i = 0
+    n = len(counts)
+    while i < n:
+        j = i
+        while j + 1 < n and counts[j + 1] == counts[i]:
+            j += 1
+        run_len = j - i + 1
+        if run_len > best_len:
+            best_len, best_start = run_len, i
+        i = j + 1
+
+    mid = best_start + best_len // 2
+    return candidates[mid]
 
 
 @dataclass(frozen=True)

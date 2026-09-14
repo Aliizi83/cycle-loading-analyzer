@@ -30,6 +30,23 @@ RAW_SERIES_COLOR = "1F77B4"  # blue
 MAX_SERIES_COLOR = "C00000"  # red
 MIN_SERIES_COLOR = "FFC000"  # amber (more legible than pure yellow on white)
 
+TIME_AXIS_TITLE = "Time (min)"
+
+
+def unit_for(name: str) -> str:
+    """The physical unit for a signal name.
+
+    Stress and Strain are MPa; any other signal in this codebase is the
+    independently-sampled third signal (e.g. Extension from an LVDT),
+    measured in mm.
+    """
+    return "MPa" if name in ("Stress", "Strain") else "mm"
+
+
+def axis_label_with_unit(name: str) -> str:
+    """A signal's axis/column label with its unit appended, e.g. "Stress (MPa)"."""
+    return f"{name} ({unit_for(name)})"
+
 
 @dataclass(frozen=True)
 class SignalGroup:
@@ -67,13 +84,13 @@ def _write_raw_data_sheet(
     for gi, group in enumerate(groups):
         time_col = col
         value_cols = []
-        header_row.append("Time")
+        header_row.append(TIME_AXIS_TITLE)
         col += 1
         if group.cycle_labels is not None:
             header_row.append("Cycle")
             col += 1
         for name, _values, _cycles in group.signals:
-            header_row.append(name)
+            header_row.append(axis_label_with_unit(name))
             value_cols.append(col)
             col += 1
         layout.append((time_col, value_cols, len(group.time)))
@@ -113,9 +130,10 @@ def _write_raw_data_sheet(
 
 
 def _write_results_sheet(
-    wb: Workbook, sheet_name: str, cycles: Sequence[Cycle]
+    wb: Workbook, sheet_name: str, signal_name: str, cycles: Sequence[Cycle]
 ) -> Worksheet:
     ws = wb.create_sheet(sheet_name)
+    unit = unit_for(signal_name)
 
     ws.merge_cells("A1:C1")
     ws["A1"] = "Max"
@@ -125,7 +143,7 @@ def _write_results_sheet(
         ws[coord].font = TITLE_FONT
         ws[coord].alignment = CENTER
 
-    headers = ["Cycle", "Time", "Max", "Cycle", "Time", "Min"]
+    headers = ["Cycle", TIME_AXIS_TITLE, f"Max ({unit})", "Cycle", TIME_AXIS_TITLE, f"Min ({unit})"]
     for col_idx, header in enumerate(headers, start=1):
         cell = ws.cell(row=2, column=col_idx, value=header)
         cell.font = HEADER_FONT
@@ -193,8 +211,8 @@ def _add_charts_sheet(
         chart = ScatterChart()
         chart.title = title
         chart.style = 13
-        chart.x_axis.title = "Time"
-        chart.y_axis.title = y_label
+        chart.x_axis.title = TIME_AXIS_TITLE
+        chart.y_axis.title = axis_label_with_unit(y_label)
         chart.width = 24
         chart.height = 12
         if raw_source is not None:
@@ -334,7 +352,7 @@ def write_workbook(
     _raw_ws, layout = _write_raw_data_sheet(wb, groups)
     for group in groups:
         for name, _values, cycles in group.signals:
-            _write_results_sheet(wb, f"{name} Results", cycles)
+            _write_results_sheet(wb, f"{name} Results", name, cycles)
     _add_charts_sheet(wb, groups, layout)
 
     if cross_reference_tables:

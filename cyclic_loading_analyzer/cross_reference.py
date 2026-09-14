@@ -15,6 +15,7 @@ from typing import Callable, Sequence
 import numpy as np
 
 from .detector import Cycle
+from .excel_writer import TIME_AXIS_TITLE, axis_label_with_unit
 
 CycleLabelFn = Callable[[int], object]
 
@@ -65,11 +66,11 @@ def main_anchor_table(
         rows.append(
             {
                 "Cycle": cycle_label_fn(cycle.cycle_number) if cycle_label_fn else cycle.cycle_number,
-                "Time": t,
-                anchor_name: v,
-                other_name: float(other_values[idx]),
-                f"Time ({ext_name})": float(ext_time[ext_idx]),
-                ext_name: float(ext_values[ext_idx]),
+                TIME_AXIS_TITLE: t,
+                axis_label_with_unit(anchor_name): v,
+                axis_label_with_unit(other_name): float(other_values[idx]),
+                f"{ext_name} Time (min)": float(ext_time[ext_idx]),
+                axis_label_with_unit(ext_name): float(ext_values[ext_idx]),
             }
         )
     return rows
@@ -97,11 +98,11 @@ def extension_anchor_table(
         rows.append(
             {
                 "Cycle": cycle_label_fn(cycle.cycle_number) if cycle_label_fn else cycle.cycle_number,
-                "Time": t,
-                ext_name: v,
-                "Time (matched)": float(main_time[idx]),
-                "Stress": float(stress[idx]),
-                "Strain": float(strain[idx]),
+                TIME_AXIS_TITLE: t,
+                axis_label_with_unit(ext_name): v,
+                "Matched Time (min)": float(main_time[idx]),
+                axis_label_with_unit("Stress"): float(stress[idx]),
+                axis_label_with_unit("Strain"): float(strain[idx]),
             }
         )
     return rows

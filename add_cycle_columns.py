@@ -1,4 +1,4 @@
-"""One-off migration: add per-row "Cycle" columns to every raw_data file.
+"""Add per-row "Cycle" columns to every raw_data file.
 
 Inserts a "Cycle" column right before Stress/Strain (labeling every row
 by which Stress zero-to-zero cycle it falls in — see
@@ -12,7 +12,8 @@ For files 19-22, every two consecutive cycles are relabeled "1_1","1_2",
 plain integers, matching the same convention already used in those
 files' cross-reference sheets.
 
-Overwrites each raw_data file in place. Run once; re-running is safe
+Called automatically as the first step of `run.py`, every run.
+Overwrites each raw_data file in place; safe to redo every time
 (idempotent) since it always rebuilds from the original 3/5 signal
 columns, ignoring any Cycle columns already present.
 """
@@ -90,7 +91,10 @@ def main() -> int:
 
         out = pd.concat(series_list, axis=1)
         out.to_excel(path, index=False)
-        print(f"{path.name}: {len(main_df)} main rows" + (f", {len(ext_df)} {ext_name} rows" if ext_df is not None else ""))
+        print(
+            f"{path.name}: {len(main_df)} main rows" + (f", {len(ext_df)} {ext_name} rows" if ext_df is not None else ""),
+            flush=True,
+        )
 
     return 0
 
