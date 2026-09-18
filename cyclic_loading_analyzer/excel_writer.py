@@ -29,6 +29,7 @@ CENTER = Alignment(horizontal="center", vertical="center")
 RAW_SERIES_COLOR = "1F77B4"  # blue
 MAX_SERIES_COLOR = "C00000"  # red
 MIN_SERIES_COLOR = "FFC000"  # amber (more legible than pure yellow on white)
+STRAIN_OVERLAY_COLOR = "C00000"  # red
 
 TIME_AXIS_TITLE = "Time (min)"
 
@@ -171,10 +172,58 @@ def _write_results_sheet(
     return ws
 
 
+def add_dual_axis_stress_strain_chart(
+    source_ws: Worksheet, time_col: int, stress_col: int, strain_col: int, last_row: int
+) -> ScatterChart:
+    """One large chart overlaying Stress and Strain vs Time on the same
+    Time axis, Strain on a secondary Y axis -- their scales are wildly
+    different (Stress in the hundreds, Strain a small fraction), so
+    without a second axis one of the two would look flat. Lets the two
+    shapes be compared directly, point for point in time.
+    """
+    xvalues = Reference(source_ws, min_col=time_col, min_row=2, max_row=last_row)
+
+    stress_chart = ScatterChart()
+    stress_chart.title = "Stress & Strain vs Time"
+    stress_chart.style = 13
+    stress_chart.x_axis.title = TIME_AXIS_TITLE
+    stress_chart.y_axis.title = axis_label_with_unit("Stress")
+    stress_chart.width = 48
+    stress_chart.height = 24
+
+    stress_values = Reference(source_ws, min_col=stress_col, min_row=1, max_row=last_row)
+    stress_series = Series(stress_values, xvalues, title_from_data=True)
+    stress_series.marker.symbol = "none"
+    stress_series.smooth = False
+    stress_series.graphicalProperties.line.width = 12000
+    stress_series.graphicalProperties.line.solidFill = RAW_SERIES_COLOR
+    stress_chart.series.append(stress_series)
+    stress_chart.y_axis.crosses = "min"
+
+    strain_chart = ScatterChart()
+    strain_chart.y_axis.axId = 200
+    strain_chart.y_axis.title = axis_label_with_unit("Strain")
+    strain_chart.y_axis.crosses = "max"
+
+    strain_values = Reference(source_ws, min_col=strain_col, min_row=1, max_row=last_row)
+    strain_series = Series(strain_values, xvalues, title_from_data=True)
+    strain_series.marker.symbol = "none"
+    strain_series.smooth = False
+    strain_series.graphicalProperties.line.width = 12000
+    strain_series.graphicalProperties.line.solidFill = STRAIN_OVERLAY_COLOR
+    strain_chart.series.append(strain_series)
+
+    stress_chart += strain_chart
+    stress_chart.legend.position = "b"
+    stress_chart.legend.overlay = False
+    return stress_chart
+
+
 def _add_charts_sheet(
     wb: Workbook,
     groups: Sequence[SignalGroup],
     layout: list[tuple[int, list[int], int]],
+    stress_strain_overlay: bool = False,
 ) -> Worksheet:
     ws = wb.create_sheet("Charts")
     raw_ws = wb["Raw Data"]
@@ -233,6 +282,7 @@ def _add_charts_sheet(
 
     combined_charts = []
     maxmin_charts = []
+    overlay_chart = None
 
     for gi, group in enumerate(groups):
         time_col, value_cols, n_rows = layout[gi]
@@ -291,10 +341,17 @@ def _add_charts_sheet(
                 )
             )
 
+        if gi == 0 and stress_strain_overlay:
+            # group 0 is always [Stress, Strain] sharing one Time column.
+            overlay_chart = add_dual_axis_stress_strain_chart(
+                source_ws, source_time_col, source_value_cols[0], source_value_cols[1], source_last_row
+            )
+
+    charts = ([overlay_chart] if overlay_chart is not None else []) + combined_charts + maxmin_charts
     row = 1
-    for chart in combined_charts + maxmin_charts:
+    for chart in charts:
         ws.add_chart(chart, f"A{row}")
-        row += 25
+        row += round(25 * chart.height / 12)  # 25 rows of spacing per 12cm of chart height
 
     return ws
 
@@ -402,6 +459,7 @@ def write_workbook(
     cross_reference_tables: dict[str, Sequence[dict]] | None = None,
     si_rows: Sequence[tuple[object, float, float, float, float]] | None = None,
     si_ext_name: str | None = None,
+    stress_strain_overlay: bool = False,
 ) -> None:
     """Write Raw Data, one Results sheet per signal, and Charts.
 
@@ -417,6 +475,11 @@ def write_workbook(
     `si_rows`/`si_ext_name`, if given, add the "Si" sheet + chart in this
     same save — see `_write_si_sheet_and_chart` — instead of a caller
     re-opening the file afterward to append it.
+
+    `stress_strain_overlay`, if true, adds one large chart overlaying
+    Stress and Strain vs Time on a shared Time axis (Strain on a
+    secondary Y axis) as the first chart in "Charts" — see
+    `add_dual_axis_stress_strain_chart`.
     """
     wb = Workbook()
     wb.remove(wb.active)  # drop default empty sheet
@@ -425,7 +488,7 @@ def write_workbook(
     for group in groups:
         for name, _values, cycles in group.signals:
             _write_results_sheet(wb, f"{name} Results", name, cycles)
-    charts_ws = _add_charts_sheet(wb, groups, layout)
+    charts_ws = _add_charts_sheet(wb, groups, layout, stress_strain_overlay)
 
     if cross_reference_tables:
         for name, rows in cross_reference_tables.items():

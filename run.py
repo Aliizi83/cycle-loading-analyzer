@@ -71,11 +71,10 @@ PROJECT_DIR = Path(__file__).parent
 INPUT_DIR = PROJECT_DIR / "raw_data"
 OUTPUT_DIR = PROJECT_DIR / "results"
 INPUT_SUFFIXES = (".xlsx", ".xls", ".csv")
-MANIFEST_PATH = INPUT_DIR / ".pipeline_manifest.json"
 
 
-def find_input_files() -> list[Path]:
-    return sorted(p for p in INPUT_DIR.iterdir() if p.suffix.lower() in INPUT_SUFFIXES)
+def find_input_files(input_dir: Path) -> list[Path]:
+    return sorted(p for p in input_dir.iterdir() if p.suffix.lower() in INPUT_SUFFIXES)
 
 
 def _file_number(path: Path) -> int | None:
@@ -87,14 +86,14 @@ def _file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _load_manifest() -> dict[str, str]:
-    if MANIFEST_PATH.exists():
-        return json.loads(MANIFEST_PATH.read_text())
+def _load_manifest(manifest_path: Path) -> dict[str, str]:
+    if manifest_path.exists():
+        return json.loads(manifest_path.read_text())
     return {}
 
 
-def _save_manifest(manifest: dict[str, str]) -> None:
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+def _save_manifest(manifest_path: Path, manifest: dict[str, str]) -> None:
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
 
 @dataclass
@@ -147,16 +146,24 @@ def _run_one(task: FileTask) -> dict:
     }
 
 
-def main() -> int:
-    input_files = find_input_files()
+def main(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR, manifest_path: Path | None = None) -> int:
+    """Run the full pipeline for every file in `input_dir`, writing to
+    `output_dir`. Defaults to raw_data/ -> results/; pass different
+    directories (see run_correct.py) to run the exact same pipeline over
+    a different set of raw_data-shaped files.
+    """
+    if manifest_path is None:
+        manifest_path = input_dir / ".pipeline_manifest.json"
+
+    input_files = find_input_files(input_dir)
     if not input_files:
         raise SystemExit(
-            f"No input files found in {INPUT_DIR}\n"
+            f"No input files found in {input_dir}\n"
             "Put your raw data file(s) (.xlsx or .csv) in that folder and "
             "run this script again."
         )
 
-    manifest = _load_manifest()
+    manifest = _load_manifest(manifest_path)
 
     tasks = []
     for input_path in input_files:
@@ -173,7 +180,7 @@ def main() -> int:
         tasks.append(
             FileTask(
                 input_path=input_path,
-                output_path=OUTPUT_DIR / f"{input_path.stem}_result.xlsx",
+                output_path=output_dir / f"{input_path.stem}_result.xlsx",
                 cycle_label_fn_name="paired" if number in PAIRED_CYCLE_FILE_NUMBERS else None,
                 si_kind=si_kind,
                 needs_migration=needs_migration,
@@ -203,7 +210,7 @@ def main() -> int:
 
             if outcome["hash"] is not None:
                 manifest[outcome["name"]] = outcome["hash"]
-                _save_manifest(manifest)  # incremental, so a crash mid-batch doesn't lose earlier progress
+                _save_manifest(manifest_path, manifest)  # incremental, so a crash mid-batch doesn't lose earlier progress
 
     print("\nDone.", flush=True)
     return 0

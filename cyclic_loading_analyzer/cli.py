@@ -227,6 +227,7 @@ def process(
     cycle_label_fn=None,
     si_kind: str | None = None,
     write_cycle_columns_to: Path | None = None,
+    stress_strain_overlay: bool = False,
 ) -> ProcessResult:
     """Run detection once and write the results workbook (and, optionally,
     the migrated raw_data file) for a raw_data file.
@@ -258,6 +259,9 @@ def process(
     workbook, instead of a separate caller re-reading and re-detecting
     them from scratch (see `add_cycle_columns.py`, which this replaces
     when called through `run.py`).
+
+    `stress_strain_overlay`, if true, adds one large Stress+Strain-vs-Time
+    dual-axis chart — see `excel_writer.write_workbook`.
     """
     main_df, ext_df, ext_name = read_combined_data(input_path)
 
@@ -329,7 +333,7 @@ def process(
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_workbook(output_path, groups, cross_reference_tables, si_rows, ext_name)
+    write_workbook(output_path, groups, cross_reference_tables, si_rows, ext_name, stress_strain_overlay)
 
     if write_cycle_columns_to is not None:
         _write_cycle_columns(

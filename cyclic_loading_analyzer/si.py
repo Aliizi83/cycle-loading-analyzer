@@ -6,7 +6,7 @@ which files use which):
 Zero-crossing (files 16, 17, 18) — Si anchored on the Stress signal's
 descending zero crossing:
 
-    Si = (Extension / 2) - (strain_i * 70)
+    Si = Extension - (strain_i * 70)
 
 For each cycle already detected in the Stress signal (Max at max_time,
 Min at min_time, with Max > 0 and Min < 0 — cycles that don't straddle
@@ -18,12 +18,12 @@ zero are skipped, since there's no descending zero-crossing to find):
 2. Read Strain at that same sample (strain_i) — same row, same file.
 3. In the Extension signal's own (independently-sampled) Time column,
    find the closest Time to that same point and read Extension there.
-4. Si = (Extension / 2) - (strain_i * 70)
+4. Si = Extension - (strain_i * 70)
 
 LVDT-max (files 19 and up) — Si anchored on the Extension (LVDT)
 signal's own Max per cycle instead:
 
-    Si = (LVDT_max / 2) - (strain_at_LVDT_max_time * 70)
+    Si = LVDT_max - (strain_at_LVDT_max_time * 70)
 
 For each cycle detected in the Extension signal itself (its own
 peak-to-peak Max, not a Stress zero-crossing):
@@ -31,7 +31,7 @@ peak-to-peak Max, not a Stress zero-crossing):
 1. Take that cycle's own Max value and Max time.
 2. In the main Time column, find the closest Time to the LVDT Max time
    and read Strain there.
-3. Si = (LVDT_max / 2) - (strain_at_that_time * 70)
+3. Si = LVDT_max - (strain_at_that_time * 70)
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def si_rows_zero_crossing(
             continue
         t_zero, strain_i = crossing
         ext_at_zero = _nearest_value(t_zero, ext_time, ext_value)
-        si = (ext_at_zero / 2) - (strain_i * 70)
+        si = (ext_at_zero) - (strain_i * 70)
         rows.append((cycle.cycle_number, t_zero, strain_i, ext_at_zero, si))
     return rows
 
@@ -110,7 +110,7 @@ def si_rows_lvdt_max(
         lvdt_max = cycle.max_value
         lvdt_max_time = cycle.max_time
         strain_i = _nearest_value(lvdt_max_time, main_time, strain)
-        si = (lvdt_max / 2) - (strain_i * 70)
+        si = (lvdt_max) - (strain_i * 70)
         label = cycle_label_fn(cycle.cycle_number) if cycle_label_fn else cycle.cycle_number
         rows.append((label, lvdt_max_time, strain_i, lvdt_max, si))
     return rows

@@ -9,3 +9,11 @@ raw_data_backup/
 raw_data_backup_merged/
 raw_data_backup_before_ext_threshold_fix/
 raw_data/.pipeline_manifest.json
+
+# Generated/derived, regeneratable from raw_data/ + correct_data/ via
+# build_corrected_raw_data*.py, run_correct.py, plot_*.py -- not source.
+raw_data_correct/
+raw_data_correct_pictures/
+results_correct/
+correct_data_pictures/
+raw_data_pictures/
